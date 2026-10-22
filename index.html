@@ -587,7 +587,7 @@ function loadAuto(force){
 $("auto-refresh").onclick=function(){status("auto-status","Pedindo ao servidor para conferir os links…");loadAuto(true)};
 $("onlyok").onclick=function(){S.onlyOk=!S.onlyOk;this.setAttribute("aria-pressed",!!S.onlyOk);save();renderLive()};
 $("test").onclick=testAll;
-function relayUrl(item,path){var q=(path||"/p")+"?u="+encodeURIComponent(item.url);if(item.ref)q+="&r="+encodeURIComponent(item.ref);if(item.ua)q+="&a="+encodeURIComponent(item.ua);return q}
+function relayUrl(item,path,teimoso){var q=(path||"/p")+"?u="+encodeURIComponent(item.url);if(item.ref)q+="&r="+encodeURIComponent(item.ref);if(item.ua)q+="&a="+encodeURIComponent(item.ua);if(teimoso)q+="&teimoso=1";return q}
 function testAll(){
   if(testing||!S.channels.length)return;
   if(!HAS_SERVER){status("test-status","O teste precisa do servidor (abra pelo endereço do Railway).");return}
@@ -625,7 +625,12 @@ document.querySelectorAll("label.btn").forEach(function(l){l.addEventListener("k
 
 /* ---------- player ---------- */
 var video=$("video");
-function listFor(kind){return kind==="live"?S.channels:allVideos()}
+function listFor(kind){
+  if(kind==="live")return S.channels;
+  if(kind==="doramas")return S.channels.filter(function(c){return c.group==="Doramas"||c.group==="Coreia"});
+  if(kind==="novos")return S.channels.filter(ehNovo);
+  return allVideos();
+}
 function openById(id,kind){var l=listFor(kind);for(var i=0;i<l.length;i++)if(l[i].id===id){play(l[i],kind);return}}
 function stop(){carregando(false);if(hls){hls.destroy();hls=null}video.removeAttribute("src");video.load()}
 function needsRelay(item){return !!S.relay||!!(item.ref||item.ua)||(location.protocol==="https:"&&/^http:/i.test(item.url))}
@@ -659,8 +664,10 @@ function motivoAmigavel(m,item){
 }
 function fail(){
   var c=current;if(!c)return;
-  // 1) tenta pelo servidor; 2) passa para o próximo link reserva do mesmo canal; 3) desiste e explica
+  // 1) tenta pelo servidor; 2) pelo servidor com condições extras (cookies do site
+  // da emissora, IP alternativo); 3) próximo link reserva; 4) desiste e explica
   if(!c.relay&&HAS_SERVER&&c.item.src!=="local"){play(c.item,c.kind,true,c.alt);return}
+  if(!c.teimoso&&HAS_SERVER&&c.item.src!=="local"){play(c.item,c.kind,true,c.alt,true);return}
   if(c.alt<(c.item.alts||[]).length){play(c.item,c.kind,false,c.alt+1);return}
   if(ehPluto(c.item)&&HAS_SERVER&&Date.now()-(renovadoEm[c.item.id]||0)>2*60*1000){renovarPluto(c);return}
   giveUp(c);
@@ -668,7 +675,7 @@ function fail(){
 function giveUp(c){
   stop();
   $("perr-title").textContent=c.item.name+" não abriu agora";
-  $("perr-why").textContent="Tentei o link direto, pelo servidor e "+((c.item.alts||[]).length?(c.item.alts.length+" link(s) reserva."):"não há link reserva.");
+  $("perr-why").textContent="Tentei o link direto, pelo servidor, com condições extras (cookies e IP alternativo) e "+((c.item.alts||[]).length?(c.item.alts.length+" link(s) reserva."):"não há link reserva.");
   $("perr").hidden=false;
   if(c.item.src!=="local")marcar(c.item,false);else c.item.dead=true;save();
   if(HAS_SERVER&&c.item.src!=="local"){
@@ -688,10 +695,10 @@ function skipNext(c){
   var l=listFor("live"),i=l.indexOf(c.item);
   for(var k=1;k<=l.length;k++){var x=l[((i+lastStep*k)%l.length+l.length)%l.length];if(!parado(x)&&liberado(x)){play(x,"live");return}}
 }
-function play(item,kind,forceRelay,alt){
+function play(item,kind,forceRelay,alt,teimoso){
   if(recarregar&&kind==="live"){try{sessionStorage.setItem("tl.retomar",item.id)}catch(e){}location.reload();return}
   if(kind==="live"&&!liberado(item)){
-    pedirPin(item.name+" está bloqueado","Digite a senha de 4 números para assistir.",function(){desbloqueados[item.id]=1;play(item,kind,forceRelay,alt)});
+    pedirPin(item.name+" está bloqueado","Digite a senha de 4 números para assistir.",function(){desbloqueados[item.id]=1;play(item,kind,forceRelay,alt,teimoso)});
     return;
   }
   var trocou=kind==="live"&&!(current&&current.item.id===item.id);
@@ -702,9 +709,9 @@ function play(item,kind,forceRelay,alt){
   }
   alt=alt||0;var src=alt?item.alts[alt-1]:item;
   var relay=HAS_SERVER&&item.src!=="local"&&(forceRelay||needsRelay(src));
-  current={item:item,kind:kind,relay:relay,alt:alt};$("perr").hidden=true;$("player").hidden=false;
+  current={item:item,kind:kind,relay:relay,alt:alt,teimoso:!!teimoso};$("perr").hidden=true;$("player").hidden=false;
   var isHls=/\.m3u8?(\?|$)/i.test(src.url)||kind==="live"&&!/\.(mp4|webm|mkv|mov|mp3|aac)(\?|$)/i.test(src.url);
-  var u=relay?relayUrl(src):src.url;
+  var u=relay?relayUrl(src,null,teimoso):src.url;
   jaTocou=false;ultimoTempo=-1;paradoDesde=Date.now();socorros=0;midiaTent=0;redeTent=0;andandoDesde=0;
   carregando(true,"Abrindo "+item.name+"…");
   if(isHls&&!video.canPlayType("application/vnd.apple.mpegurl")&&window.Hls&&Hls.isSupported()){
@@ -906,7 +913,18 @@ function alturas(){
 /* Qualidade escolhida vira um teto: a TV continua baixando a qualidade sozinha se a internet piorar. */
 function aplicarQualidade(){
   if(!hls||!hls.levels||!hls.levels.length)return;
-  if(!S.qual){hls.autoLevelCapping=-1;return}
+  if(!S.qual){
+    // Streams internacionais (Arirang, doramas): a internet do Brasil entrega ~2 Mbps
+    // dessas CDNs; sem teto, o player sobe sozinho para 1080p e trava. Teto automático
+    // no nível mais alto até 2 Mbps.
+    if(current&&current.item&&ehInternacional(current.item)){
+      var teto=-1;
+      hls.levels.forEach(function(l,i){if(l.bitrate&&l.bitrate<=2000000)teto=i});
+      hls.autoLevelCapping=teto;
+      return;
+    }
+    hls.autoLevelCapping=-1;return;
+  }
   var idx=-1,menor=0;
   hls.levels.forEach(function(l,i){if(l.height<hls.levels[menor].height)menor=i;if(l.height&&l.height<=S.qual&&(idx<0||l.height>hls.levels[idx].height))idx=i});
   hls.autoLevelCapping=idx<0?menor:idx;

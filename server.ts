@@ -59,6 +59,13 @@ const PERFIS: { ua: string; refDoProprio: boolean }[] = [
 ];
 const perfilPorHost = new Map<string, number>();
 
+// Condições que venceram o 403/401 de cada emissora no modo teimoso
+// (cookies do site dela e/ou IP alternativo). O relay reaplica sozinho
+// nas próximas vezes, sem precisar pedir de novo.
+const condicaoPorHost = new Map<string, { cookie?: string; xff?: string }>();
+const UA_CHROME = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/130.0 Safari/537.36";
+const IPS_BR = ["189.63.1.1", "187.44.1.1", "177.92.1.1", "201.48.1.1"];
+
 function cabecalhos(ref: string | null, ua: string | null, range?: string | null): Record<string, string> {
   // identity: alguns servidores (Pluto, por exemplo) marcam a chave do vídeo como
   // gzip sem ela estar comprimida, e a descompressão automática quebrava a transmissão.
@@ -69,6 +76,19 @@ function cabecalhos(ref: string | null, ua: string | null, range?: string | null
 }
 
 async function buscar(u: URL, ref: string | null, ua: string | null, range: string | null, ms: number): Promise<Response> {
+  // Se o modo teimoso já venceu essa emissora antes, tenta a condição vencedora primeiro.
+  const cond = condicaoPorHost.get(u.host);
+  if (cond && (cond.cookie || cond.xff)) {
+    try {
+      const h = cabecalhos(ref || u.origin + "/", ua || UA_CHROME, range);
+      if (cond.cookie) h.cookie = cond.cookie;
+      if (cond.xff) h["x-forwarded-for"] = cond.xff;
+      const rc = await fetch(u.href, { headers: h, redirect: "follow", signal: AbortSignal.timeout(ms) });
+      if (rc.status !== 403 && rc.status !== 401) return rc;
+      rc.body?.cancel();
+      condicaoPorHost.delete(u.host); // venceu: tenta do zero na próxima
+    } catch {}
+  }
   // Pluto TV usa chave própria no link; trocar o perfil não muda nada, então vai direto.
   const tentativas = /pluto\.tv$/i.test(u.hostname) ? 1 : PERFIS.length;
   const inicio = perfilPorHost.get(u.host) ?? 0;
@@ -87,6 +107,54 @@ async function buscar(u: URL, ref: string | null, ua: string | null, range: stri
     r.body?.cancel();
   }
   throw new Error("sem tentativas");
+}
+
+// Modo teimoso: quando a emissora recusa a conexão (403/401) mesmo com os perfis,
+// tenta condições extras e guarda a que funcionar para aquela emissora:
+// 1) cookies do site dela (muitas exigem passar pelo site antes de liberar o vídeo);
+// 2) IP brasileiro alternativo (simula a conexão vindo de outro lugar, caso o IP
+//    do servidor esteja marcado como robô).
+async function buscarTeimoso(u: URL, ref: string | null, ua: string | null, range: string | null, ms: number): Promise<Response> {
+  const r = await buscar(u, ref, ua, range, ms);
+  if (r.status !== 403 && r.status !== 401) return r;
+  r.body?.cancel();
+  const host = u.host;
+  let cookies = "";
+  try {
+    const home = await fetch(u.origin + "/", { headers: cabecalhos(null, UA_CHROME), redirect: "follow", signal: AbortSignal.timeout(15000) });
+    try {
+      const gs = (home.headers as any).getSetCookie;
+      const sc: string[] = typeof gs === "function" ? gs.call(home.headers) : [];
+      cookies = sc.map((c) => c.split(";")[0]).join("; ");
+    } catch {}
+    home.body?.cancel();
+  } catch (e) {
+    console.log(JSON.stringify({ evt: "teimoso_cookies_erro", host, erro: String(e).slice(0, 80) }));
+  }
+  const tentativas: { cookie?: string; xff?: string }[] = [];
+  if (cookies) tentativas.push({ cookie: cookies });
+  for (const ip of IPS_BR) {
+    if (cookies) tentativas.push({ cookie: cookies, xff: ip });
+    tentativas.push({ xff: ip });
+  }
+  for (const t of tentativas) {
+    try {
+      const h = cabecalhos(u.origin + "/", UA_CHROME, range);
+      if (t.cookie) h.cookie = t.cookie;
+      if (t.xff) h["x-forwarded-for"] = t.xff;
+      const r2 = await fetch(u.href, { headers: h, redirect: "follow", signal: AbortSignal.timeout(ms) });
+      if (r2.status !== 403 && r2.status !== 401) {
+        condicaoPorHost.set(host, t);
+        console.log(JSON.stringify({ evt: "teimoso_ok", host, comCookie: !!t.cookie, xff: t.xff || "real" }));
+        return r2;
+      }
+      r2.body?.cancel();
+    } catch (e) {
+      console.log(JSON.stringify({ evt: "teimoso_tentativa_erro", host, erro: String(e).slice(0, 80) }));
+    }
+  }
+  console.log(JSON.stringify({ evt: "teimoso_falhou", host }));
+  return new Response("A emissora recusou a conexão", { status: 403, headers: CORS });
 }
 
 function viaRelay(abs: string, ref: string | null, ua: string | null): string {
@@ -118,9 +186,12 @@ async function relay(req: Request, q: URLSearchParams): Promise<Response> {
   const u = alvo(q.get("u"));
   if (!u) return new Response("Endereço inválido", { status: 400, headers: CORS });
   const ref = q.get("r"), ua = q.get("a");
+  const teimoso = q.get("teimoso") === "1";
   let res: Response;
   try {
-    res = await buscar(u, ref, ua, req.headers.get("range"), 20000);
+    res = teimoso
+      ? await buscarTeimoso(u, ref, ua, req.headers.get("range"), 20000)
+      : await buscar(u, ref, ua, req.headers.get("range"), 20000);
   } catch (e) {
     console.log(JSON.stringify({ evt: "relay_erro", host: u.hostname, erro: String(e) }));
     return new Response("Não foi possível alcançar a transmissão", { status: 502, headers: CORS });
@@ -253,6 +324,46 @@ async function verificar(url: string | null, ref: string | null, ua: string | nu
     return json(true, "no ar");
   } catch (e) {
     return json(false, String(e).includes("timeout") ? "sem resposta" : "erro de conexão");
+  }
+}
+
+// Verificação profunda (página Doramas): além da playlist, baixa um pedaço real
+// do vídeo e mede a velocidade. Só entra na lista quem baixa rápido o bastante
+// para tocar sem travar: pelo menos 1.5x o bitrate da variante mais leve.
+async function verificarFundo(url: string | null, ref: string | null, ua: string | null): Promise<{ ok: boolean; motivo: string }> {
+  const base = await verificar(url, ref, ua);
+  if (!base.ok || base.motivo === "arquivo") return base;
+  try {
+    const u = alvo(url);
+    if (!u) return { ok: false, motivo: "endereço inválido" };
+    const r0 = await buscar(u, ref, ua, null, 10000);
+    const mestre = await r0.text();
+    let texto = mestre, baseHref = r0.url || u.href, bw = 0;
+    if (mestre.includes("#EXT-X-STREAM-INF")) {
+      const linhas = mestre.split(/\r?\n/);
+      const i = linhas.findIndex((l) => l.startsWith("#EXT-X-STREAM-INF"));
+      const prox = linhas.slice(i + 1).find((l) => l.trim() && !l.startsWith("#"));
+      if (!prox) return { ok: false, motivo: "sem variante" };
+      bw = parseInt((linhas[i].match(/BANDWIDTH=(\d+)/) || [])[1] || "0", 10) || 0;
+      const vUrl = new URL(prox.trim(), baseHref);
+      const rv = await buscar(vUrl, ref, ua, null, 10000);
+      if (!rv.ok) { rv.body?.cancel(); return { ok: false, motivo: "variante HTTP " + rv.status }; }
+      texto = await rv.text();
+      baseHref = rv.url || vUrl.href;
+    }
+    const seg = texto.split(/\r?\n/).map((l) => l.trim()).find((l) => l && !l.startsWith("#"));
+    if (!seg) return { ok: false, motivo: "sem pedaços" };
+    const t0 = Date.now();
+    const rs = await buscar(new URL(seg, baseHref), ref, ua, null, 15000);
+    if (!rs.ok && rs.status !== 206) { rs.body?.cancel(); return { ok: false, motivo: "pedaço HTTP " + rs.status }; }
+    const buf = await rs.arrayBuffer();
+    const ms = Math.max(Date.now() - t0, 1);
+    const kbps = Math.round(buf.byteLength * 8 / ms);
+    const minimo = Math.max(Math.round(bw * 1.5 / 1000), 800);
+    if (kbps < minimo) return { ok: false, motivo: "lento (" + kbps + " kbps)" };
+    return { ok: true, motivo: "no ar (" + kbps + " kbps)" };
+  } catch (e) {
+    return { ok: false, motivo: "erro no pedaço" };
   }
 }
 
@@ -547,7 +658,9 @@ async function atualizar(): Promise<void> {
     for (const f of fontes) if (!porUrl.has(f.url)) porUrl.set(f.url, f);
     const resultados = await emLotes(urls, 24, async (u) => {
       const f = porUrl.get(u)!;
-      return { u, r: await verificar(u, f.ref || null, f.ua || null) };
+      // Página Doramas: teste profundo (baixa um pedaço real e mede a velocidade).
+      const fundo = f.grupo === "Doramas" || f.grupo === "Coreia";
+      return { u, r: await (fundo ? verificarFundo(u, f.ref || null, f.ua || null) : verificar(u, f.ref || null, f.ua || null)) };
     });
     const status = new Map(resultados.map((x) => [x.u, x.r]));
     // Agrupa links do mesmo canal: o primeiro que funciona vira o principal, os outros viram reserva.
@@ -562,7 +675,8 @@ async function atualizar(): Promise<void> {
       // 403 fica como reserva: pode ser bloqueio de região que só libera para quem está no Brasil.
       const bons = lista.filter((f) => status.get(f.url)?.ok);
       const talvez = lista.filter((f) => talvezFunciona(chave, status.get(f.url)?.motivo || ""));
-      const usar = [...bons, ...talvez];
+      // Página Doramas: só entra quem passou no teste profundo (no ar E sem travar).
+      const usar = lista.some((f) => f.grupo === "Doramas" || f.grupo === "Coreia") ? bons : [...bons, ...talvez];
       if (!usar.length) continue;
       const p = usar[0];
       const eraConhecido = antes.has(chave);
@@ -589,30 +703,42 @@ async function atualizar(): Promise<void> {
 // ganha uma busca por link novo nas fontes (mesmo canal, outro endereço); só
 // sai da lista quem não tem nenhum link funcionando em lugar nenhum.
 // Canais do Pluto ficam de fora daqui: o guardião do Pluto já renova eles a cada hora.
-async function verificacaoHoraria(): Promise<void> {
-  if (estado.atualizando || estado.revisando || estado.plutoRodando) return;
-  estado.revisando = true;
+/* Núcleo da verificação: testa os links dos canais-alvo e, para quem caiu,
+   busca link novo nas fontes (ou remove se não houver). Usado pela rodada
+   completa (horária) e pela rotativa (a cada 10 min, 1/6 dos canais por vez). */
+async function verificarLote(alvos: Canal[], rotulo: string): Promise<void> {
   const inicio = Date.now();
   try {
-    const alvos = estado.canais.filter((c) => !c.id.startsWith("pluto:"));
     if (!alvos.length) return;
-    const testes = await emLotes(alvos, 24, async (c) => ({ c, r: await verificar(c.url, c.ref || null, c.ua || null) }));
-    const mortos = testes.filter((x) => !x.r.ok && !talvezFunciona(x.c.id, x.r.motivo)).map((x) => x.c);
+    const testes = await emLotes(alvos, 24, async (c) => {
+      const fundo = c.group === "Doramas" || c.group === "Coreia";
+      return { c, r: await (fundo ? verificarFundo(c.url, c.ref || null, c.ua || null) : verificar(c.url, c.ref || null, c.ua || null)) };
+    });
+    // Página Doramas: 403/401 também conta como morto (filtro estrito); a recuperação
+    // tenta o modo teimoso antes de remover.
+    const mortos = testes.filter((x) => {
+      if (x.r.ok) return false;
+      const fundo = x.c.group === "Doramas" || x.c.group === "Coreia";
+      return fundo || !talvezFunciona(x.c.id, x.r.motivo);
+    }).map((x) => x.c);
     if (!mortos.length) {
-      console.log(JSON.stringify({ evt: "verificacao_horaria", canais: alvos.length, mortos: 0, ms: Date.now() - inicio }));
+      console.log(JSON.stringify({ evt: "verificacao_" + rotulo, canais: alvos.length, mortos: 0, ms: Date.now() - inicio }));
       return;
     }
-    // Busca links novos nas fontes para os canais que caíram.
-    const [free, iptv, fame] = await Promise.allSettled([
+    // Busca links novos nas fontes para os canais que caíram (doramas da Pluto
+    // ganham links fresquinhos aqui também, para a chave não vencer entre as rodadas).
+    const [free, iptv, fame, doramasFrescos] = await Promise.allSettled([
       freeTv().then((r) => (r.ok ? r.text() : "")),
       fetch(FONTE_IPTV, { signal: AbortSignal.timeout(30000) }).then((r) => (r.ok ? r.text() : "")),
       famelack(),
+      gerarDoramasPluto().catch(() => [] as Fonte[]),
     ]);
-    if (fame.status === "rejected") console.log(JSON.stringify({ evt: "famelack_erro", onde: "verificacao_horaria", erro: String(fame.reason) }));
+    if (fame.status === "rejected") console.log(JSON.stringify({ evt: "famelack_erro", onde: "verificacao_" + rotulo, erro: String(fame.reason) }));
     const principais = [
       ...lerM3U(free.status === "fulfilled" ? free.value : "").map((f) => ({ ...f, grupo: f.grupo || "TV aberta" })),
       ...lerM3U(iptv.status === "fulfilled" ? iptv.value : ""),
       ...doramaFontes(),
+      ...(doramasFrescos.status === "fulfilled" ? doramasFrescos.value : []),
     ];
     const fontes = [...principais, ...juntarPorNome(principais, fame.status === "fulfilled" ? fame.value : [])].filter(naoPago);
     const porChave = new Map<string, Fonte[]>();
@@ -626,8 +752,24 @@ async function verificacaoHoraria(): Promise<void> {
       const vistos = new Set([c.url, ...c.alts.map((a) => a.url)]);
       const novos = (porChave.get(c.id) || []).filter((f) => !vistos.has(f.url)).map((f) => ({ url: f.url, ref: f.ref, ua: f.ua }));
       const candidatos = [{ url: c.url, ref: c.ref, ua: c.ua }, ...c.alts, ...novos];
-      const res = await Promise.all(candidatos.map((l) => verificar(l.url, l.ref || null, l.ua || null)));
-      const bons = candidatos.filter((_, i) => res[i].ok || talvezFunciona(c.id, res[i].motivo));
+      const fundo = c.group === "Doramas" || c.group === "Coreia";
+      const res = await Promise.all(candidatos.map((l) => fundo ? verificarFundo(l.url, l.ref || null, l.ua || null) : verificar(l.url, l.ref || null, l.ua || null)));
+      const bons = candidatos.filter((_, i) => res[i].ok || (!fundo && talvezFunciona(c.id, res[i].motivo)));
+      // Doramas: se tudo falhou com 403/401, tenta o modo teimoso uma vez antes de remover.
+      if (!bons.length && fundo && res.some((r) => /403|401/.test(r.motivo))) {
+        const u = alvo(c.url);
+        if (u) {
+          try {
+            const rt = await buscarTeimoso(u, c.ref || null, c.ua || null, null, 15000);
+            const ok = rt.ok && rt.status !== 403 && rt.status !== 401;
+            rt.body?.cancel();
+            if (ok) {
+              console.log(JSON.stringify({ evt: "teimoso_recuperou", id: c.id }));
+              return; // mantém o canal; a condição vencedora foi salva e o relay reaplica
+            }
+          } catch {}
+        }
+      }
       if (!bons.length) { removidos.push(c.id); return; }
       c.url = bons[0].url; c.ref = bons[0].ref; c.ua = bons[0].ua;
       c.alts = bons.slice(1);
@@ -639,9 +781,36 @@ async function verificacaoHoraria(): Promise<void> {
     }
     estado.atualizado = Date.now();
     await salvarLista();
-    console.log(JSON.stringify({ evt: "verificacao_horaria", canais: alvos.length, mortos: mortos.length, recuperados, removidos: removidos.length, ms: Date.now() - inicio }));
+    console.log(JSON.stringify({ evt: "verificacao_" + rotulo, canais: alvos.length, mortos: mortos.length, recuperados, removidos: removidos.length, ms: Date.now() - inicio }));
   } catch (e) {
-    console.log(JSON.stringify({ evt: "verificacao_horaria_erro", erro: String(e) }));
+    console.log(JSON.stringify({ evt: "verificacao_" + rotulo + "_erro", erro: String(e) }));
+  }
+}
+
+async function verificacaoHoraria(): Promise<void> {
+  if (estado.atualizando || estado.revisando || estado.plutoRodando) return;
+  estado.revisando = true;
+  try {
+    await verificarLote(estado.canais.filter((c) => !c.id.startsWith("pluto:")), "horaria");
+  } finally {
+    estado.revisando = false;
+  }
+}
+
+/* Verificação rotativa a cada 10 min: testa 1/6 dos canais por vez, então cada
+   canal é verificado pelo menos 1x por hora, mas canal que cai é pego em até
+   ~10 min e ganha link novo na hora. Não mexe nos canais do Pluto (o guardião
+   deles já renova de hora em hora). */
+let loteRotativo = 0;
+async function verificacaoRotativa(): Promise<void> {
+  if (estado.atualizando || estado.revisando || estado.plutoRodando) return;
+  estado.revisando = true;
+  try {
+    const todos = estado.canais.filter((c) => !c.id.startsWith("pluto:"));
+    const n = loteRotativo % 6;
+    loteRotativo++;
+    const lote = todos.filter((_, i) => i % 6 === n);
+    await verificarLote(lote, "rotativa_lote" + (n + 1));
   } finally {
     estado.revisando = false;
   }
@@ -791,8 +960,9 @@ async function falhou(q: URLSearchParams): Promise<Response> {
     return resp(false);
   }
   const links = [{ url: c.url, ref: c.ref, ua: c.ua }, ...c.alts];
-  const testes = await Promise.all(links.map(async (l) => ({ l, r: await verificar(l.url, l.ref || null, l.ua || null) })));
-  const bons = testes.filter((t) => t.r.ok).map((t) => t.l).concat(testes.filter((t) => !t.r.ok && talvezFunciona(id, t.r.motivo)).map((t) => t.l));
+  const fundo = c.group === "Doramas" || c.group === "Coreia";
+  const testes = await Promise.all(links.map(async (l) => ({ l, r: await (fundo ? verificarFundo(l.url, l.ref || null, l.ua || null) : verificar(l.url, l.ref || null, l.ua || null)) })));
+  const bons = testes.filter((t) => t.r.ok).map((t) => t.l).concat(fundo ? [] : testes.filter((t) => !t.r.ok && talvezFunciona(id, t.r.motivo)).map((t) => t.l));
   console.log(JSON.stringify({ evt: "falha_relatada", id, links: links.length, bons: bons.length, motivos: testes.map((t) => t.r.motivo) }));
   const j = estado.canais.findIndex((x) => x.id === id);
   if (j < 0) return resp(false);
@@ -873,5 +1043,5 @@ setInterval(() => { if (Date.now() - guia.ts > 25 * 60 * 1000) atualizarGuia(); 
 // Verificação horária dos canais: primeira 5 minutos depois de ligar, depois a cada hora.
 // Testa cada canal; quem saiu do ar ganha busca de link novo e só sai da lista se não houver
 // nenhum link funcionando. O Pluto fica de fora (o guardião já cuida dele a cada hora).
-setTimeout(() => { if (!estado.atualizando) verificacaoHoraria(); }, 5 * 60 * 1000);
-setInterval(verificacaoHoraria, 60 * 60 * 1000);
+setTimeout(() => { if (!estado.atualizando) verificacaoRotativa(); }, 2 * 60 * 1000);
+setInterval(verificacaoRotativa, 10 * 60 * 1000);
