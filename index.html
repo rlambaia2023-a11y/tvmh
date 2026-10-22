@@ -260,6 +260,7 @@ main{padding-left:max(var(--gut), env(safe-area-inset-left,0px));padding-right:m
         <h2>Streams sem travar</h2>
         <p>Escolha como a TV segura o vídeo. Quanto mais folga, menos trava, mas o canal demora um pouco mais para abrir e fica alguns segundos atrás do ao vivo.</p>
         <div class="modos" id="modos">
+          <button class="modo f" data-m="blindado"><strong>Blindado</strong><span>Folga de até 3 min, fica mais longe do ao vivo e quase não sobe de qualidade sozinho. Para canais internacionais ou internet fraca.</span></button>
           <button class="modo f" data-m="estavel"><strong>Estável</strong><span>Folga de até 2 min, começa em qualidade menor e sobe sozinho. Para internet que oscila.</span></button>
           <button class="modo f" data-m="normal"><strong>Equilibrado</strong><span>Folga de 30 s a 1 min. Bom para a maioria das casas.</span></button>
           <button class="modo f" data-m="rapido"><strong>Rápido</strong><span>Abre e troca de canal mais depressa, com folga de 15 s. Para internet boa e estável.</span></button>
@@ -773,6 +774,14 @@ setInterval(function(){
 /* Três jeitos de segurar o vídeo. "Estável" guarda mais vídeo de folga, fica mais longe do ao vivo
    e começa numa qualidade menor; "Rápido" abre e troca de canal mais depressa com pouca folga. */
 var MODOS={
+  /* Blindado: para streams internacionais com latência alta e banda limitada.
+     Medições do PC (22/10): Arirang ~2 Mbps/72ms, Pluto stitcher ~126ms.
+     Estratégia: buffer gigante (90s), fica longe do ao vivo (8 segmentos),
+     ABR ultra-conservador (só sobe com 2x de folga), começa no mínimo. */
+  blindado:{backBufferLength:30,maxBufferLength:90,maxMaxBufferLength:180,liveSyncDurationCount:8,liveMaxLatencyDurationCount:24,
+    startLevel:0,abrEwmaDefaultEstimate:500000,abrBandWidthFactor:0.7,abrBandWidthUpFactor:0.5,maxBufferHole:1.5,
+    fragLoadingMaxRetry:12,levelLoadingMaxRetry:8,manifestLoadingMaxRetry:6,nudgeMaxRetry:12,maxStarvationDelay:8,maxLoadingDelay:8,
+    fragLoadingRetryDelay:1500,levelLoadingRetryDelay:1500},
   estavel:{backBufferLength:30,maxBufferLength:60,maxMaxBufferLength:120,liveSyncDurationCount:6,liveMaxLatencyDurationCount:18,
     startLevel:0,abrEwmaDefaultEstimate:800000,abrBandWidthFactor:0.8,abrBandWidthUpFactor:0.6,maxBufferHole:1,
     fragLoadingMaxRetry:10,levelLoadingMaxRetry:6,manifestLoadingMaxRetry:4,nudgeMaxRetry:10,maxStarvationDelay:6,maxLoadingDelay:6},
@@ -789,8 +798,8 @@ function cfgHls(item){
   var c={enableWorker:true,lowLatencyMode:false,capLevelToPlayerSize:true,manifestLoadingRetryDelay:1000,levelLoadingRetryDelay:1000,fragLoadingRetryDelay:800};
   var m=MODOS[modo()];for(var k in m)c[k]=m[k];
   // Streams internacionais (doramas, Pluto fora do BR, Arirang): latência alta trava com buffer curto.
-  // Aplica o perfil estável mesmo que o usuário esteja no modo equilibrado/rápido.
-  if(item&&ehInternacional(item)){var e=MODOS.estavel;for(var k2 in e)c[k2]=e[k2];}
+  // Aplica o perfil blindado mesmo que o usuário esteja em outro modo.
+  if(item&&ehInternacional(item)){var e=MODOS.blindado;for(var k2 in e)c[k2]=e[k2];}
   return c;
 }
 /* Canal com servidor fora do Brasil: tende a oscilar e precisa de mais folga no buffer. */

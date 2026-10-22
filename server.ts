@@ -398,6 +398,28 @@ async function salvarLista(): Promise<void> {
   await guardar("lista.m3u", textoM3U());
 }
 
+// ---------- Teste final automático: roda no fim de tudo ----------
+// Verifica se o sistema está funcional e rodando limpo após cada operação
+// grande (rebuild, verificação rotativa, inicialização). Não mexe em nada,
+// só relata: "ok" ou a lista do que está errado.
+function testeFinal(origem: string): void {
+  const problemas: string[] = [];
+  const total = estado.canais.length;
+  if (!total) problemas.push("lista de canais vazia");
+  const semUrl = estado.canais.filter((c) => !c.url).length;
+  if (semUrl) problemas.push(semUrl + " canal(is) sem URL");
+  const semGrupo = estado.canais.filter((c) => !c.group).length;
+  if (semGrupo) problemas.push(semGrupo + " canal(is) sem grupo");
+  const doramas = estado.canais.filter((c) => c.group === "Doramas").length;
+  if (!doramas) problemas.push("grupo Doramas vazio");
+  const pluto = estado.canais.filter((c) => c.id.startsWith("pluto:")).length;
+  if (!pluto) problemas.push("nenhum canal Pluto na lista");
+  // EPG carrega 1 min após o boot; no teste de início, ausência ainda não é problema.
+  if ((!guia || !guia.ts) && origem !== "inicio") problemas.push("guia EPG sem dados");
+  const ok = !problemas.length;
+  console.log(JSON.stringify({ evt: "teste_final", origem, ok, total, doramas, pluto, problemas: problemas.length ? problemas : undefined }));
+}
+
 // ---------- Lista automática: baixa, testa e guarda só o que funciona ----------
 const FONTE_IPTV = Bun.env.FONTE_IPTV || "https://iptv-org.github.io/iptv/countries/br.m3u";
 // Coreia do Sul (iptv-org): canais abertos coreanos — MBC Drama, EBS, Arirang e emissoras regionais.
@@ -691,6 +713,7 @@ async function atualizar(): Promise<void> {
     const todos = [...abertos, ...canaisPluto];
     if (todos.length) { estado.canais = todos; estado.atualizado = Date.now(); estado.plutoTs = Date.now(); await salvarLista(); }
     console.log(JSON.stringify({ evt: "lista_atualizada", pluto: canaisPluto.length, plutoDaFonte: fontesPluto.length > 0, fontes: fontes.length, famelack: fame.status === "fulfilled" ? fame.value.length : 0, links: urls.length, canais: todos.length, ms: Date.now() - inicio }));
+    testeFinal("atualizar");
   } catch (e) {
     console.log(JSON.stringify({ evt: "lista_erro", erro: String(e), mantidos: estado.canais.length }));
   } finally {
@@ -721,12 +744,9 @@ async function verificarLote(alvos: Canal[], rotulo: string): Promise<void> {
       const fundo = x.c.group === "Doramas" || x.c.group === "Coreia";
       return fundo || !talvezFunciona(x.c.id, x.r.motivo);
     }).map((x) => x.c);
-    if (!mortos.length) {
-      console.log(JSON.stringify({ evt: "verificacao_" + rotulo, canais: alvos.length, mortos: 0, ms: Date.now() - inicio }));
-      return;
-    }
     // Busca links novos nas fontes para os canais que caíram (doramas da Pluto
     // ganham links fresquinhos aqui também, para a chave não vencer entre as rodadas).
+    // Roda mesmo sem mortos: é aqui que os canais NOVOS das fontes são detectados.
     const [free, iptv, fame, doramasFrescos] = await Promise.allSettled([
       freeTv().then((r) => (r.ok ? r.text() : "")),
       fetch(FONTE_IPTV, { signal: AbortSignal.timeout(30000) }).then((r) => (r.ok ? r.text() : "")),
@@ -779,9 +799,42 @@ async function verificarLote(alvos: Canal[], rotulo: string): Promise<void> {
       const fora = new Set(removidos);
       estado.canais = estado.canais.filter((c) => !fora.has(c.id));
     }
+    // Canais novos nas fontes: testa e sobe para a lista automaticamente quem estiver no ar.
+    const idsExistentes = new Set(estado.canais.map((c) => c.id));
+    const nomesExistentes = new Set(estado.canais.map((c) => limparNome(c.name).toLowerCase()));
+    const chavesNovas = [...porChave.keys()].filter((k) => !idsExistentes.has(k));
+    let novosAdicionados = 0;
+    await emLotes(chavesNovas.slice(0, 20), 8, async (chave) => {
+      const lista = porChave.get(chave)!;
+      const p = lista[0];
+      const nomeLimpo = limparNome(p.nome).toLowerCase();
+      if (nomesExistentes.has(nomeLimpo)) return; // mesmo canal com outra chave
+      const ehFundo = (p.grupo || "") === "Doramas" || (p.grupo || "") === "Coreia";
+      for (const f of lista.slice(0, 3)) {
+        const r = ehFundo ? await verificarFundo(f.url, f.ref || null, f.ua || null) : await verificar(f.url, f.ref || null, f.ua || null);
+        if (r.ok || (!ehFundo && talvezFunciona(chave, r.motivo))) {
+          const alts: { url: string; ref: string; ua: string }[] = [];
+          for (const f2 of lista.slice(1, 4)) {
+            if (f2.url === f.url) continue;
+            const r2 = await verificar(f2.url, f2.ref || null, f2.ua || null);
+            if (r2.ok) alts.push({ url: f2.url, ref: f2.ref, ua: f2.ua });
+          }
+          estado.canais.push({
+            id: chave, name: limparNome(p.nome), logo: p.logo || "",
+            group: grupoPt(p.grupo), url: f.url, ref: f.ref, ua: f.ua,
+            alts, novoEm: Date.now(),
+          });
+          nomesExistentes.add(nomeLimpo);
+          novosAdicionados++;
+          console.log(JSON.stringify({ evt: "canal_novo_adicionado", rotulo, id: chave, nome: limparNome(p.nome) }));
+          break;
+        }
+      }
+    });
     estado.atualizado = Date.now();
     await salvarLista();
-    console.log(JSON.stringify({ evt: "verificacao_" + rotulo, canais: alvos.length, mortos: mortos.length, recuperados, removidos: removidos.length, ms: Date.now() - inicio }));
+    console.log(JSON.stringify({ evt: "verificacao_" + rotulo, canais: alvos.length, mortos: mortos.length, recuperados, removidos: removidos.length, novos: novosAdicionados, ms: Date.now() - inicio }));
+    testeFinal("verificacao_" + rotulo);
   } catch (e) {
     console.log(JSON.stringify({ evt: "verificacao_" + rotulo + "_erro", erro: String(e) }));
   }
@@ -797,9 +850,9 @@ async function verificacaoHoraria(): Promise<void> {
   }
 }
 
-/* Verificação rotativa a cada 10 min: testa 1/6 dos canais por vez, então cada
-   canal é verificado pelo menos 1x por hora, mas canal que cai é pego em até
-   ~10 min e ganha link novo na hora. Não mexe nos canais do Pluto (o guardião
+/* Verificação rotativa a cada 20 min: testa 1/6 dos canais por vez, então cada
+   canal é verificado pelo menos 1x a cada 2 horas, mas canal que cai é pego em
+   até ~20 min e ganha link novo na hora. Não mexe nos canais do Pluto (o guardião
    deles já renova de hora em hora). */
 let loteRotativo = 0;
 async function verificacaoRotativa(): Promise<void> {
@@ -1028,6 +1081,7 @@ Bun.serve({
     } catch {}
   }
   console.log(JSON.stringify({ evt: "inicio", marca: MARCA, porta: PORTA, dados: PASTA_DADOS, canaisCarregados: estado.canais.length }));
+  testeFinal("inicio");
 }
 console.log(MARCA + " no ar em http://localhost:" + PORTA);
 if (Date.now() - estado.atualizado > SEIS_HORAS) atualizar();
@@ -1040,8 +1094,10 @@ setInterval(() => { if (Date.now() - estado.plutoTs > UMA_HORA - 60 * 1000) atua
 // Guia de programação do Pluto: primeira busca 1 minuto depois de ligar, depois a cada 30 minutos.
 setTimeout(atualizarGuia, 60 * 1000);
 setInterval(() => { if (Date.now() - guia.ts > 25 * 60 * 1000) atualizarGuia(); }, 10 * 60 * 1000);
-// Verificação horária dos canais: primeira 5 minutos depois de ligar, depois a cada hora.
-// Testa cada canal; quem saiu do ar ganha busca de link novo e só sai da lista se não houver
-// nenhum link funcionando. O Pluto fica de fora (o guardião já cuida dele a cada hora).
+// Verificação rotativa dos canais: primeira 2 minutos depois de ligar, depois a cada 20 minutos
+// (1/6 dos canais por vez, cobertura total a cada 2h). Testa cada canal; quem saiu do ar ganha
+// busca de link novo e só sai da lista se não houver nenhum link funcionando.
+// Canais novos nas fontes entram sozinhos. O Pluto fica de fora (o guardião já cuida dele a cada hora).
+// No fim de cada rodada roda o testeFinal(), que confere se está tudo limpo.
 setTimeout(() => { if (!estado.atualizando) verificacaoRotativa(); }, 2 * 60 * 1000);
-setInterval(verificacaoRotativa, 10 * 60 * 1000);
+setInterval(verificacaoRotativa, 20 * 60 * 1000);
