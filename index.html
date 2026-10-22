@@ -1,0 +1,1105 @@
+<!doctype html>
+<html lang="pt-BR">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>TV Livre MH</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Big+Shoulders+Display:wght@600;800&family=Figtree:wght@400;500;700&display=swap">
+<script src="https://cdnjs.cloudflare.com/ajax/libs/hls.js/1.5.13/hls.min.js"></script>
+<style>
+/* Layout: TV de 3 metros — barra superior fixa com abas, grade de canais, player em tela cheia por cima. Tema escuro único, de propósito. */
+:root{
+  --bg:#0b0f14;          /* fundo: azul-tinta quase preto */
+  --panel:#141a22;       /* cartões */
+  --panel-2:#1c2430;
+  --line:#2a3442;
+  --fg:#e9edf2;
+  --muted:#8b97a8;
+  --signal:#ffb547;      /* âmbar de sinal: foco e destaques */
+  --live:#ff4d4d;        /* “ao vivo” */
+  --font-display:"Big Shoulders Display","Arial Narrow",Impact,sans-serif;
+  --font-body:"Figtree",system-ui,-apple-system,"Segoe UI",Roboto,sans-serif;
+  --gut:max(16px, 3vw);
+  color-scheme:dark;
+}
+*{box-sizing:border-box}
+html,body{height:100%;margin:0}
+body{background:var(--bg);color:var(--fg);font-family:var(--font-body);font-size:clamp(15px,1.15vw,22px);overflow-x:hidden;-webkit-font-smoothing:antialiased}
+[hidden]{display:none!important}
+button,input{font:inherit;color:inherit}
+
+/* ---------- topo ---------- */
+.top{position:sticky;top:0;z-index:5;display:flex;align-items:center;gap:clamp(12px,2vw,40px);flex-wrap:wrap;
+  padding-block:clamp(12px,1.6vw,28px);padding-left:max(var(--gut), env(safe-area-inset-left,0px));padding-right:max(var(--gut), env(safe-area-inset-right,0px));
+  background:linear-gradient(var(--bg) 70%, transparent)}
+.brand{font-family:var(--font-display);font-weight:800;font-size:clamp(26px,2.6vw,52px);letter-spacing:.02em;text-transform:uppercase;line-height:1}
+.brand b{color:var(--signal)}
+.tabs{display:flex;gap:6px;flex-wrap:wrap}
+.tab{background:none;border:0;padding:.5em 1em;border-radius:999px;color:var(--muted);font-weight:700;cursor:pointer}
+.tab[aria-selected="true"]{color:var(--bg);background:var(--fg)}
+.clock{margin-left:auto;font-family:var(--font-display);font-weight:600;font-size:clamp(22px,2vw,40px);font-variant-numeric:tabular-nums;color:var(--muted)}
+
+main{padding-left:max(var(--gut), env(safe-area-inset-left,0px));padding-right:max(var(--gut), env(safe-area-inset-right,0px));padding-block:0 6vh}
+.toolbar{display:flex;gap:10px;flex-wrap:wrap;align-items:center;margin-bottom:clamp(14px,1.6vw,28px)}
+.chip{background:var(--panel);border:1px solid var(--line);padding:.4em .9em;border-radius:999px;cursor:pointer;font-weight:500;white-space:nowrap}
+.chip[aria-pressed="true"]{border-color:var(--signal);color:var(--signal)}
+.search{flex:1 1 220px;max-width:420px;background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:.5em .9em}
+
+/* ---------- grade ---------- */
+.grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(clamp(150px,13vw,260px),1fr));gap:clamp(10px,1.2vw,22px)}
+.card{position:relative;display:flex;flex-direction:column;align-items:stretch;text-align:left;background:var(--panel);border:2px solid transparent;border-radius:14px;padding:0;cursor:pointer;overflow:hidden;min-width:0;transition:transform .12s ease, border-color .12s ease}
+.card .art{aspect-ratio:16/9;display:grid;place-items:center;background:var(--panel-2);max-width:100%}
+.card .art img{max-width:70%;max-height:70%;object-fit:contain}
+.card .ini{font-family:var(--font-display);font-weight:800;font-size:2.2em;color:var(--muted)}
+.card .meta{display:flex;gap:.6em;align-items:baseline;padding:.6em .8em .75em;min-width:0}
+.card .num{font-family:var(--font-display);font-weight:600;color:var(--signal);font-variant-numeric:tabular-nums}
+.card .name{font-weight:700;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;min-width:0}
+.card .grp{position:absolute;top:.5em;left:.5em;font-size:.7em;letter-spacing:.06em;text-transform:uppercase;background:rgba(0,0,0,.55);padding:.2em .55em;border-radius:6px;color:var(--fg)}
+
+.f:focus{outline:none}
+.f:focus-visible,.f.kb:focus{outline:3px solid var(--signal);outline-offset:3px}
+.card:focus{border-color:var(--signal);transform:scale(1.04);z-index:1}
+.card.dead .art,.card.dead .meta{opacity:.4}
+.card .off{position:absolute;top:.5em;right:.5em;z-index:1;font-size:.7em;letter-spacing:.06em;text-transform:uppercase;background:var(--live);color:#fff;padding:.2em .55em;border-radius:6px}
+.teststat{color:var(--muted);font-size:.9em;font-variant-numeric:tabular-nums}
+.chip:focus,.tab:focus,.btn:focus,.search:focus,.field input:focus{outline:3px solid var(--signal);outline-offset:2px}
+
+.empty{max-width:60ch;color:var(--muted);line-height:1.6;padding:2em 0}
+.empty strong{color:var(--fg)}
+
+/* ---------- ajustes ---------- */
+.settings{display:grid;grid-template-columns:repeat(auto-fit,minmax(min(100%,420px),1fr));gap:clamp(14px,1.6vw,28px);align-items:start}
+.box{background:var(--panel);border-radius:14px;padding:clamp(16px,1.6vw,28px);display:flex;flex-direction:column;gap:12px;min-width:0}
+.box h2{margin:0;font-family:var(--font-display);font-weight:800;text-transform:uppercase;letter-spacing:.03em;font-size:1.5em}
+.box p{margin:0;color:var(--muted);line-height:1.5}
+.field{display:flex;flex-direction:column;gap:4px}
+.field label{font-size:.8em;color:var(--muted);letter-spacing:.04em;text-transform:uppercase}
+.field input{background:var(--bg);border:1px solid var(--line);border-radius:10px;padding:.55em .8em;min-width:0}
+.row{display:flex;gap:10px;flex-wrap:wrap}
+.btn{background:var(--fg);color:var(--bg);border:0;border-radius:10px;padding:.55em 1.1em;font-weight:700;cursor:pointer}
+.btn.ghost{background:transparent;color:var(--fg);border:1px solid var(--line)}
+.btn.danger{background:transparent;color:var(--live);border:1px solid var(--live)}
+.sources{list-style:none;margin:0;padding:0;display:flex;flex-direction:column;gap:6px}
+.sources li{display:flex;justify-content:space-between;gap:10px;font-size:.9em;color:var(--muted);border-top:1px solid var(--line);padding-top:6px;min-width:0}
+.sources li span{overflow:hidden;text-overflow:ellipsis;white-space:nowrap;min-width:0}
+.status{font-size:.9em;color:var(--signal);min-height:1.4em}
+
+/* ---------- player ---------- */
+.player{position:fixed;inset:0;z-index:20;background:#000;display:flex}
+.player video{width:100%;height:100%;object-fit:contain;background:#000}
+.osd{position:absolute;left:0;right:0;bottom:0;display:flex;align-items:flex-end;gap:clamp(12px,2vw,36px);
+  padding:clamp(16px,3vw,56px);padding-bottom:calc(clamp(16px,3vw,56px) + env(safe-area-inset-bottom,0px));
+  background:linear-gradient(transparent, rgba(0,0,0,.85));transition:opacity .3s}
+.osd.hide{opacity:0}
+.osd .bignum{font-family:var(--font-display);font-weight:800;font-size:clamp(48px,6vw,120px);line-height:.85;color:var(--signal);font-variant-numeric:tabular-nums}
+.osd .title{font-weight:700;font-size:clamp(20px,2.2vw,44px)}
+.osd .sub{color:#c9d1dc;display:flex;gap:.8em;align-items:center;margin-top:.3em}
+.pill{background:var(--live);color:#fff;font-weight:700;font-size:.75em;letter-spacing:.08em;padding:.15em .55em;border-radius:5px}
+.osd .hint{margin-left:auto;color:#aab4c2;font-size:.85em;text-align:right;line-height:1.6}
+.perr{position:absolute;inset:0;display:grid;place-items:center;text-align:center;padding:24px}
+.perr div{max-width:44ch;background:rgba(20,26,34,.92);border-radius:14px;padding:24px;line-height:1.5}
+.perr strong{display:block;font-size:1.3em;margin-bottom:.4em}
+.perr p{margin:.4em 0 0;color:#c9d1dc}
+.perr #perr-next{color:var(--signal);font-weight:700;font-variant-numeric:tabular-nums}
+.digits{position:fixed;top:calc(24px + env(safe-area-inset-top,0px));right:calc(32px + env(safe-area-inset-right,0px));z-index:30;font-family:var(--font-display);font-weight:800;font-size:clamp(48px,5vw,96px);color:var(--signal);background:rgba(0,0,0,.7);padding:.05em .35em;border-radius:12px;font-variant-numeric:tabular-nums}
+.closebtn{position:absolute;top:calc(16px + env(safe-area-inset-top,0px));right:calc(16px + env(safe-area-inset-right,0px));background:rgba(0,0,0,.6);color:#fff;border:0;border-radius:999px;padding:.5em 1em;font-weight:700;cursor:pointer}
+
+/* ---------- favoritos, bloqueio e guia nos cartões ---------- */
+.card .badges{position:absolute;top:.5em;right:.5em;display:flex;gap:.3em;z-index:1}
+.card .badges span{font-size:.75em;background:rgba(0,0,0,.6);padding:.15em .45em;border-radius:6px;line-height:1.3}
+.card .badges .fav{color:var(--signal)}
+.card .badges .novo{background:var(--signal);color:#fff;font-weight:800;font-size:.65em;letter-spacing:.05em}
+.card.locked .art img,.card.locked .art .ini{filter:blur(10px);opacity:.5}
+.card .now{display:block;padding:0 .8em .7em;margin-top:-.35em;font-size:.78em;color:var(--muted);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.card .now b{color:var(--live);font-weight:700;margin-right:.35em}
+.chip.resume{border-color:var(--signal);color:var(--fg)}
+.chip.resume::before{content:"▶ ";color:var(--signal)}
+
+/* ---------- guia no OSD ---------- */
+.osd .epg{margin-top:.5em;color:#c9d1dc;line-height:1.45;max-width:70ch}
+.osd .epg .bar{display:block;height:4px;background:rgba(255,255,255,.18);border-radius:2px;margin:.35em 0;max-width:420px;overflow:hidden}
+.osd .epg .bar i{display:block;height:100%;background:var(--signal)}
+.osd .epg .next{color:#97a3b4;font-size:.9em}
+.osd .favstar{color:var(--signal)}
+
+/* ---------- painéis por cima do vídeo ---------- */
+.panel{position:absolute;top:0;bottom:0;z-index:3;width:min(440px,92vw);background:rgba(11,15,20,.94);display:flex;flex-direction:column;
+  padding:calc(20px + env(safe-area-inset-top,0px)) 0 calc(20px + env(safe-area-inset-bottom,0px))}
+.panel.left{left:0;border-right:1px solid var(--line)}
+.player:has(.panel:not([hidden])) .closebtn{display:none}
+.panel.right{right:0;border-left:1px solid var(--line)}
+.panel h3{margin:0 0 .6em;padding:0 22px;font-family:var(--font-display);font-weight:800;text-transform:uppercase;letter-spacing:.03em;font-size:1.4em}
+.panel .scroll{overflow-y:auto;flex:1;padding:4px 14px}
+.prow{display:flex;align-items:center;gap:.8em;width:100%;text-align:left;background:none;border:2px solid transparent;border-radius:10px;padding:.5em .7em;cursor:pointer;min-width:0}
+.prow .num{font-family:var(--font-display);font-weight:600;color:var(--signal);font-variant-numeric:tabular-nums;min-width:2.6em}
+.prow .txt{min-width:0;flex:1}
+.prow .nm{display:block;font-weight:700;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.prow .sm{display:block;font-size:.8em;color:var(--muted);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.prow[aria-current="true"]{background:var(--panel-2)}
+.prow:focus{outline:none;border-color:var(--signal)}
+.prow .val{margin-left:auto;color:var(--muted);font-size:.85em;white-space:nowrap}
+.prow .val.on{color:var(--signal)}
+.panel .sec{padding:.8em 22px .2em;font-size:.75em;letter-spacing:.06em;text-transform:uppercase;color:var(--muted)}
+.panel .foot{padding:.6em 22px 0;font-size:.8em;color:var(--muted);line-height:1.5}
+
+/* ---------- senha (PIN) ---------- */
+.pin{position:fixed;inset:0;z-index:40;display:grid;place-items:center;background:rgba(0,0,0,.75);padding:16px}
+.pin .box{width:min(420px,100%);align-items:center;text-align:center}
+.pin .dots{display:flex;gap:14px;justify-content:center;margin:.4em 0}
+.pin .dots i{width:22px;height:22px;border-radius:50%;border:2px solid var(--muted)}
+.pin .dots i.on{background:var(--signal);border-color:var(--signal)}
+.pin .keys{display:grid;grid-template-columns:repeat(3,1fr);gap:10px;width:100%}
+.pin .keys button{padding:.6em 0;font-size:1.2em}
+.pin .msg{color:var(--live);min-height:1.4em;font-size:.9em}
+
+/* ---------- divisão depois do teste: funcionando / parados ---------- */
+.secao{grid-column:1/-1;margin:.6em 0 0;display:flex;align-items:baseline;gap:.6em;flex-wrap:wrap;font-family:var(--font-display);font-weight:800;text-transform:uppercase;letter-spacing:.03em;font-size:1.5em}
+.secao span{font-family:var(--font-body);font-size:.6em;font-weight:700;padding:.1em .6em;border-radius:999px;background:var(--panel-2)}
+.secao.ok span{color:#7ee2a8}
+.secao.off{color:var(--muted);margin-top:1.2em}
+.secao.off span{color:var(--live)}
+.secao small{font-family:var(--font-body);font-size:.5em;font-weight:500;text-transform:none;letter-spacing:0;color:var(--muted)}
+.secao-vazia{grid-column:1/-1;margin:0;color:var(--muted)}
+
+/* ---------- streams: carregando e informações ---------- */
+.loading{position:absolute;top:50%;left:50%;transform:translate(-50%,-50%);display:flex;flex-direction:column;align-items:center;gap:12px;color:#c9d1dc;pointer-events:none;text-align:center}
+.loading i{width:54px;height:54px;border-radius:50%;border:5px solid rgba(255,255,255,.18);border-top-color:var(--signal);animation:gira 1s linear infinite}
+@keyframes gira{to{transform:rotate(360deg)}}
+.stats{display:grid;grid-template-columns:auto 1fr;gap:.25em .9em;padding:.2em 22px .4em;font-size:.85em;color:var(--muted)}
+.stats b{color:var(--fg);font-weight:500;font-variant-numeric:tabular-nums}
+.modos{display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:10px}
+.modo{background:var(--bg);border:2px solid var(--line);border-radius:12px;padding:.7em .9em;text-align:left;cursor:pointer;display:flex;flex-direction:column;gap:.25em}
+.modo strong{font-size:1em}
+.modo span{font-size:.8em;color:var(--muted);line-height:1.4}
+.modo[aria-pressed="true"]{border-color:var(--signal)}
+.modo[aria-pressed="true"] strong{color:var(--signal)}
+.modo:focus{outline:3px solid var(--signal);outline-offset:2px}
+.speed{font-family:var(--font-display);font-weight:800;font-size:2.2em;font-variant-numeric:tabular-nums;line-height:1}
+.speed small{font-family:var(--font-body);font-size:.4em;font-weight:500;color:var(--muted)}
+
+@media (prefers-reduced-motion:reduce){.card,.osd{transition:none}.card:focus{transform:none}.loading i{animation-duration:3s}}
+</style>
+</head>
+<body>
+
+<header class="top">
+  <div class="brand" id="brand">TV Livre <b>MH</b></div>
+  <nav class="tabs" role="tablist">
+    <button class="tab f" role="tab" data-tab="live" aria-selected="true">Ao vivo</button>
+    <button class="tab f" role="tab" data-tab="doramas" aria-selected="false">Doramas</button>
+    <button class="tab f" role="tab" data-tab="novos" aria-selected="false">Novos</button>
+    <button class="tab f" role="tab" data-tab="videos" aria-selected="false">Meus vídeos</button>
+    <button class="tab f" role="tab" data-tab="settings" aria-selected="false">Ajustes</button>
+  </nav>
+  <div class="clock" id="clock">--:--</div>
+</header>
+
+<main>
+  <!-- AO VIVO -->
+  <section id="tab-live">
+    <div class="toolbar">
+      <input class="search f" id="q" type="search" placeholder="Buscar canal…" aria-label="Buscar canal">
+      <button class="btn ghost f" id="test">Testar canais</button>
+      <button class="chip f" id="onlyok" aria-pressed="false">Só os que funcionam</button>
+      <span class="teststat" id="test-status"></span>
+    </div>
+    <div class="toolbar">
+      <div class="row" id="groups"></div>
+    </div>
+    <div class="grid" id="channels"></div>
+    <div class="empty" id="live-empty" hidden>
+      <strong>Nenhum canal ainda.</strong><br>
+      Os canais abertos estão chegando do servidor. Se demorar, confira a internet da TV ou vá em <strong>Ajustes</strong> e toque em “Atualizar agora”.
+    </div>
+  </section>
+
+  <!-- DORAMAS -->
+  <section id="tab-doramas" hidden>
+    <div class="toolbar">
+      <span class="teststat">Canais de doramas e emissoras coreanas, gratuitos e abertos.</span>
+    </div>
+    <div class="grid" id="doramas"></div>
+    <div class="empty" id="doramas-empty" hidden>
+      <strong>Nenhum canal de dorama ainda.</strong><br>
+      Eles chegam do servidor junto com a lista de canais.
+    </div>
+  </section>
+
+  <!-- NOVOS -->
+  <section id="tab-novos" hidden>
+    <div class="toolbar">
+      <span class="teststat">Canais que entraram na lista nos últimos 7 dias.</span>
+    </div>
+    <div class="grid" id="novos"></div>
+    <div class="empty" id="novos-empty" hidden>
+      <strong>Nenhum canal novo por aqui.</strong><br>
+      Quando um canal novo entrar no ar, ele aparece nesta seção com o selo NOVO.
+    </div>
+  </section>
+
+  <!-- MEUS VÍDEOS -->
+  <section id="tab-videos" hidden>
+    <div class="toolbar">
+      <label class="btn f" for="files" tabindex="0" id="files-label">Abrir vídeos deste aparelho</label>
+      <input type="file" id="files" accept="video/*,audio/*" multiple hidden>
+    </div>
+    <div class="grid" id="videos"></div>
+    <div class="empty" id="videos-empty" hidden>
+      <strong>Sua videoteca está vazia.</strong><br>
+      Abra arquivos do pendrive ou do PC no botão acima, ou cadastre o link de um vídeo seu (de um HD na rede, Jellyfin, Google Drive público etc.) em <strong>Ajustes</strong>.
+      Arquivos abertos do aparelho valem só enquanto a página estiver aberta; links cadastrados ficam salvos.
+    </div>
+  </section>
+
+  <!-- AJUSTES -->
+  <section id="tab-settings" hidden>
+    <div class="settings">
+      <div class="box" id="streams">
+        <h2>Streams sem travar</h2>
+        <p>Escolha como a TV segura o vídeo. Quanto mais folga, menos trava, mas o canal demora um pouco mais para abrir e fica alguns segundos atrás do ao vivo.</p>
+        <div class="modos" id="modos">
+          <button class="modo f" data-m="estavel"><strong>Estável</strong><span>Folga de até 2 min, começa em qualidade menor e sobe sozinho. Para internet que oscila.</span></button>
+          <button class="modo f" data-m="normal"><strong>Equilibrado</strong><span>Folga de 30 s a 1 min. Bom para a maioria das casas.</span></button>
+          <button class="modo f" data-m="rapido"><strong>Rápido</strong><span>Abre e troca de canal mais depressa, com folga de 15 s. Para internet boa e estável.</span></button>
+        </div>
+        <div class="field"><label>Qualidade máxima</label></div>
+        <div class="row" id="qmax">
+          <button class="chip f" data-q="0">Automática</button>
+          <button class="chip f" data-q="1080">Até 1080p</button>
+          <button class="chip f" data-q="720">Até 720p</button>
+          <button class="chip f" data-q="480">Até 480p</button>
+        </div>
+        <div class="row">
+          <button class="chip f" id="sempre-relay" aria-pressed="false">Passar sempre pelo servidor</button>
+        </div>
+        <p>Ligue “passar pelo servidor” só se os canais travarem logo ao abrir ou derem erro de conexão. Para a maioria dos canais o link direto é mais rápido.</p>
+        <div class="row" style="align-items:center">
+          <button class="btn f" id="speed-test">Testar minha internet</button>
+          <div class="speed" id="speed-val" hidden></div>
+        </div>
+        <div class="status" id="speed-status"></div>
+        <div class="row"><button class="btn ghost f" id="speed-apply" hidden>Usar a recomendação</button></div>
+      </div>
+
+      <div class="box">
+        <h2>Lista IPTV</h2>
+        <p>Cole o endereço da lista M3U que você assina. Os canais entram na aba Ao vivo, separados pelos grupos da própria lista.</p>
+        <div class="field"><label for="m3u-url">Link da lista (.m3u / .m3u8)</label><input class="f" id="m3u-url" type="url" placeholder="https://…/lista.m3u"></div>
+        <div class="row">
+          <button class="btn f" id="m3u-load">Carregar lista</button>
+          <label class="btn ghost f" for="m3u-file" tabindex="0">Abrir arquivo .m3u</label>
+          <input type="file" id="m3u-file" accept=".m3u,.m3u8,text/plain" hidden>
+        </div>
+        <div class="status" id="m3u-status"></div>
+        <ul class="sources" id="sources"></ul>
+      </div>
+
+      <div class="box">
+        <h2>Canais abertos</h2>
+        <p>Os canais abertos do Brasil (listas iptv-org e Free-TV) entram sozinhos. O servidor testa cada link a cada 6 horas, tira os que caíram e guarda links reserva do mesmo canal. Você não precisa importar nada.</p>
+        <div class="row"><button class="btn ghost f" id="auto-refresh">Atualizar agora</button></div>
+        <div class="status" id="auto-status"></div>
+      </div>
+
+      <div class="box">
+        <h2>Cadastrar à mão</h2>
+        <p>Serve para um canal avulso ou para um vídeo seu que já está num link.</p>
+        <div class="field"><label for="m-name">Nome</label><input class="f" id="m-name" type="text" placeholder="Ex.: TV Universitária"></div>
+        <div class="field"><label for="m-url">Link do vídeo ou transmissão</label><input class="f" id="m-url" type="url" placeholder="https://…/stream.m3u8 ou …/filme.mp4"></div>
+        <div class="field"><label for="m-group">Grupo (opcional)</label><input class="f" id="m-group" type="text" placeholder="Ex.: Notícias"></div>
+        <div class="row">
+          <button class="btn f" id="add-channel">Salvar como canal</button>
+          <button class="btn ghost f" id="add-video">Salvar em Meus vídeos</button>
+        </div>
+        <div class="status" id="m-status"></div>
+      </div>
+
+      <div class="box">
+        <h2>Sistema</h2>
+        <div class="field"><label for="sys-name">Nome da sua TV</label><input class="f" id="sys-name" type="text" maxlength="24"></div>
+        <div class="row">
+          <button class="btn f" id="save-name">Salvar nome</button>
+          <button class="btn danger f" id="wipe">Apagar tudo</button>
+        </div>
+        <div class="status" id="sys-status"></div>
+        <p>No controle: setas movem, OK abre, Voltar fecha. Botão amarelo marca o canal como favorito. Dentro do player: CH+/CH− (ou ↑/↓) trocam de canal, os números levam direto ao canal, ← (ou verde) abre a lista de canais, → (ou azul) abre qualidade, áudio e legenda, e o vermelho volta ao canal anterior.</p>
+      </div>
+
+      <div class="box">
+        <h2>Bloqueio parental</h2>
+        <p id="pin-info">Crie uma senha de 4 números. Com ela, canais de conteúdo adulto ficam trancados e você pode trancar qualquer outro canal pelo menu → do player.</p>
+        <div class="field"><label for="pin-new">Senha de 4 números</label><input class="f" id="pin-new" type="password" inputmode="numeric" maxlength="4" autocomplete="off" placeholder="••••"></div>
+        <div class="row">
+          <button class="btn f" id="pin-save">Salvar senha</button>
+          <button class="btn ghost f" id="pin-off">Tirar a senha</button>
+        </div>
+        <div class="status" id="pin-status"></div>
+      </div>
+    </div>
+  </section>
+</main>
+
+<!-- PLAYER -->
+<div class="player" id="player" hidden>
+  <video id="video" playsinline autoplay></video>
+  <button class="closebtn" id="pclose">Voltar</button>
+  <div class="perr" id="perr" hidden><div><strong id="perr-title">Este canal não abriu agora</strong><p id="perr-why">Tentei o link direto, pelo servidor e os links reserva.</p><p id="perr-next"></p></div></div>
+  <div class="loading" id="loading" hidden><i></i><span id="loading-txt">Carregando…</span></div>
+  <div class="osd" id="osd">
+    <div class="bignum" id="o-num"></div>
+    <div>
+      <div class="title" id="o-title"></div>
+      <div class="sub"><span class="pill" id="o-live">AO VIVO</span><span id="o-group"></span><span class="favstar" id="o-fav" hidden>★ favorito</span></div>
+      <div class="epg" id="o-epg" hidden></div>
+    </div>
+    <div class="hint">← canais · → opções<br>Voltar sai</div>
+  </div>
+  <aside class="panel left" id="plist" hidden>
+    <h3 id="plist-title">Canais</h3>
+    <div class="scroll" id="plist-items"></div>
+  </aside>
+  <aside class="panel right" id="popts" hidden>
+    <h3>Opções</h3>
+    <div class="scroll" id="popts-items"></div>
+    <div class="foot" id="popts-foot"></div>
+  </aside>
+</div>
+<div class="digits" id="digits" hidden></div>
+<div class="pin" id="pin" hidden>
+  <div class="box">
+    <h2 id="pin-title">Canal bloqueado</h2>
+    <p id="pin-sub">Digite a senha de 4 números.</p>
+    <div class="dots" id="pin-dots"><i></i><i></i><i></i><i></i></div>
+    <div class="msg" id="pin-msg"></div>
+    <div class="keys" id="pin-keys"></div>
+  </div>
+</div>
+
+<script>
+(function(){
+"use strict";
+var KEY="tvlivremh.v1";
+var NOME="TV Livre MH";
+var DEFAULT={name:NOME,channels:[],videos:[],sources:[]};
+var S=load();
+var localVideos=[]; // arquivos abertos do aparelho, só nesta sessão
+var tab="live", group="Todos", query="";
+var current=null, hls=null, osdTimer=null, digitBuf="", digitTimer=null, testing=false;
+var HAS_SERVER=/^https?:$/.test(location.protocol);
+var GUIA={}, desbloqueados={};
+var G_FAV="★ Favoritos", G_REC="Recentes";
+var ADULTO=/adult|xxx|\+ ?18|er[oó]tic|sexy|playboy|hot ?tv/i;
+
+/* ---------- favoritos, recentes e bloqueio parental ---------- */
+function arr(k){if(!Array.isArray(S[k]))S[k]=[];return S[k]}
+function byId(id){for(var i=0;i<S.channels.length;i++)if(S.channels[i].id===id)return S.channels[i];return null}
+function ehFav(it){return arr("favs").indexOf(it.id)>-1}
+function trancado(it){if(!S.pin||!it)return false;return arr("bloq").indexOf(it.id)>-1||ADULTO.test(it.group||"")||ADULTO.test(it.name||"")}
+function liberado(it){return !trancado(it)||!!desbloqueados[it.id]}
+function alternar(k,id){var l=arr(k),i=l.indexOf(id);if(i>-1)l.splice(i,1);else l.push(id);save();return i<0}
+/* Resultado do teste de canais, guardado por canal: sobrevive à atualização da lista a cada 15 minutos. */
+function resultado(){if(!S.teste||typeof S.teste!=="object")S.teste={};return S.teste}
+function parado(c){var r=resultado()[c.id];return r===false||(r===undefined&&!!c.dead)}
+function marcar(c,ok){resultado()[c.id]=ok;c.dead=!ok}
+function lembrarRecente(it){var l=arr("recentes").filter(function(x){return x!==it.id});l.unshift(it.id);S.recentes=l.slice(0,12)}
+/* Guia: devolve o programa de agora e o próximo, quando o servidor tem a grade do canal (Pluto TV). */
+function guiaDe(it){
+  var g=GUIA[String(it&&it.id||"").replace(/^a-/,"")];if(!g)return null;
+  var t=Date.now(),cur=null,nxt=null;
+  for(var i=0;i<g.length;i++){if(g[i].s<=t&&g[i].e>t)cur=g[i];else if(g[i].s>t&&!nxt)nxt=g[i]}
+  return cur||nxt?{cur:cur,nxt:nxt}:null;
+}
+function loadGuia(){
+  if(!HAS_SERVER)return;
+  fetch("/epg",{cache:"no-store"}).then(function(r){return r.json()}).then(function(j){
+    GUIA=j.guia||{};
+    if($("player").hidden)renderLive();else{renderEpgOsd();if(!$("plist").hidden)renderPlist(false)}
+  }).catch(function(){});
+}
+
+function load(){try{var d=JSON.parse(localStorage.getItem(KEY));if(d&&d.channels){if(!d.name)d.name=NOME;return d}}catch(e){}return JSON.parse(JSON.stringify(DEFAULT))}
+function save(){try{localStorage.setItem(KEY,JSON.stringify(S))}catch(e){status("sys-status","O navegador da TV não deixou salvar. O que você adicionou some ao fechar.")}}
+function $(id){return document.getElementById(id)}
+function uid(){return Math.random().toString(36).slice(2,10)}
+function esc(s){return String(s==null?"":s).replace(/[&<>"]/g,function(c){return{"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;"}[c]})}
+function initials(n){return (n||"?").replace(/[^\p{L}\p{N} ]/gu,"").split(/\s+/).filter(Boolean).slice(0,2).map(function(w){return w[0]}).join("").toUpperCase()||"TV"}
+function status(id,msg){$(id).textContent=msg}
+
+/* ---------- relógio e nome ---------- */
+function tick(){var d=new Date();$("clock").textContent=String(d.getHours()).padStart(2,"0")+":"+String(d.getMinutes()).padStart(2,"0")}
+tick();setInterval(tick,15000);
+function renderBrand(){var n=S.name||NOME;var c=n.indexOf(":");if(c>-1){$("brand").innerHTML=esc(n.slice(0,c+1))+" <b>"+esc(n.slice(c+1).trim())+"</b>"}else{var parts=n.split(" ");var last=parts.length>1?parts.pop():"";$("brand").innerHTML=esc(parts.join(" "))+(last?" <b>"+esc(last)+"</b>":"")}document.title=n;$("sys-name").value=n}
+
+/* ---------- M3U ---------- */
+function parseM3U(text,src){
+  var out=[],cur=null,lines=text.split(/\r?\n/);
+  for(var i=0;i<lines.length;i++){
+    var l=lines[i].trim(); if(!l)continue;
+    if(l.indexOf("#EXTINF")===0){
+      var attrs={},m,re=/([\w-]+)="([^"]*)"/g;
+      while((m=re.exec(l)))attrs[m[1].toLowerCase()]=m[2];
+      var ci=l.lastIndexOf(",");
+      cur={id:uid(),name:(ci>-1?l.slice(ci+1):"").trim()||attrs["tvg-name"]||"Sem nome",logo:attrs["tvg-logo"]||"",group:attrs["group-title"]||"Outros",src:src,ref:attrs["http-referrer"]||"",ua:attrs["http-user-agent"]||""};
+    }else if(cur&&/^#EXTVLCOPT:http-referr?er=/i.test(l)){cur.ref=l.slice(l.indexOf("=")+1).trim()}
+    else if(cur&&/^#EXTVLCOPT:http-user-agent=/i.test(l)){cur.ua=l.slice(l.indexOf("=")+1).trim()}
+    else if(l[0]!=="#"&&cur){cur.url=l;out.push(cur);cur=null}
+  }
+  return out;
+}
+function addList(text,label,statusId){
+  var items=parseM3U(text,label);
+  if(!items.length){status(statusId,"Não encontrei canais nesse arquivo. Confira se é mesmo uma lista M3U.");return}
+  var keep=S.channels.filter(function(c){return c.src!==label}),seen={};
+  keep.forEach(function(c){seen[c.url]=1});
+  items=items.filter(function(c){if(seen[c.url])return false;seen[c.url]=1;return true});
+  S.channels=keep.concat(items);
+  S.sources=S.sources.filter(function(s){return s.label!==label});
+  S.sources.push({label:label,count:items.length});
+  save();renderAll();
+  status(statusId,items.length+" canais carregados.");
+}
+function fetchList(url,label,statusId){
+  status(statusId,"Baixando lista…");
+  function get(u){return fetch(u).then(function(r){if(!r.ok)throw new Error("HTTP "+r.status);return r.text()})}
+  (url[0]==="/"?get(url):HAS_SERVER?get("/list?u="+encodeURIComponent(url)).catch(function(){return get(url)}):get(url))
+  .then(function(t){addList(t,label,statusId)})
+  .catch(function(){status(statusId,"Não consegui baixar. O servidor da lista pode bloquear acesso pelo navegador; tente baixar o arquivo e usar “Abrir arquivo .m3u”.")});
+}
+
+/* ---------- render ---------- */
+function filtered(){
+  var base;
+  if(group===G_FAV)base=S.channels.filter(ehFav);
+  else if(group===G_REC)base=arr("recentes").map(byId).filter(Boolean);
+  else base=S.channels.filter(function(c){return group==="Todos"||c.group===group});
+  return base.filter(function(c){return (!query||c.name.toLowerCase().indexOf(query)>-1)&&!(S.onlyOk&&parado(c))});
+}
+function hm(ts){var d=new Date(ts);return String(d.getHours()).padStart(2,"0")+":"+String(d.getMinutes()).padStart(2,"0")}
+function card(item,num,showGroup){
+  var art=item.logo?'<img src="'+esc(item.logo)+'" alt="" loading="lazy" onerror="this.replaceWith(Object.assign(document.createElement(\'span\'),{className:\'ini\',textContent:\''+esc(initials(item.name)).replace(/'/g,"")+'\'}))">':'<span class="ini">'+esc(initials(item.name))+'</span>';
+  var lock=trancado(item),fav=ehFav(item),g=lock?null:guiaDe(item);
+  var badges=(fav?'<span class="fav" title="Favorito">★</span>':'')+(lock?'<span title="Bloqueado">🔒</span>':'')+(ehNovo(item)?'<span class="novo" title="Canal novo">NOVO</span>':'');
+  var morto=item.src!=="local"&&parado(item);
+  return '<button class="card f'+(morto?' dead':'')+(lock?' locked':'')+'" data-id="'+item.id+'">'+(morto?'<span class="off">parado</span>':'')+
+    (badges&&!morto?'<span class="badges">'+badges+'</span>':'')+
+    '<div class="art">'+art+'</div>'+
+    (showGroup?'<span class="grp">'+esc(item.group)+'</span>':'')+
+    '<div class="meta">'+(num?'<span class="num">'+String(num).padStart(3,"0")+'</span>':'')+'<span class="name">'+esc(item.name)+'</span></div>'+
+    (g?'<span class="now">'+(g.cur?'<b>AGORA</b>'+esc(g.cur.t):'Às '+hm(g.nxt.s)+': '+esc(g.nxt.t))+'</span>':'')+'</button>';
+}
+function renderLive(){
+  var foco=document.activeElement,focoId=foco&&foco.dataset&&(foco.dataset.id||foco.dataset.g||foco.id);
+  var groups=["Todos"];
+  if(S.channels.some(ehFav))groups.push(G_FAV);
+  if(arr("recentes").some(byId))groups.push(G_REC);
+  S.channels.forEach(function(c){if(groups.indexOf(c.group)<0)groups.push(c.group)});
+  if(groups.indexOf(group)<0)group="Todos";
+  var ult=S.ultimo&&byId(S.ultimo);
+  $("groups").innerHTML=(ult?'<button class="chip resume f" id="resume">Continuar: '+esc(ult.name)+'</button>':'')+
+    (groups.length>1?groups.map(function(g){return '<button class="chip f" aria-pressed="'+(g===group)+'" data-g="'+esc(g)+'">'+esc(g)+'</button>'}).join(""):"");
+  $("onlyok").setAttribute("aria-pressed",!!S.onlyOk);
+  var list=filtered();
+  var html=function(l){return l.map(function(c){return card(c,S.channels.indexOf(c)+1,true)}).join("")};
+  if(S.testeTs){
+    /* Depois do teste: duas divisões, primeiro os canais que abriram, depois os parados. */
+    var bons=list.filter(function(c){return !parado(c)}),ruins=list.filter(parado);
+    $("channels").innerHTML=
+      '<h3 class="secao ok">Canais funcionando <span>'+bons.length+'</span><small>teste de '+hm(S.testeTs)+'</small></h3>'+(bons.length?html(bons):'<p class="secao-vazia">Nenhum canal desta lista abriu no teste.</p>')+
+      (S.onlyOk?'':'<h3 class="secao off">Canais parados <span>'+ruins.length+'</span><small>não abriram no teste; o servidor reconfere e eles voltam sozinhos se a emissora voltar</small></h3>'+(ruins.length?html(ruins):'<p class="secao-vazia">Nenhum canal parado. Tudo no ar!</p>'));
+  }else $("channels").innerHTML=html(list);
+  $("live-empty").hidden=S.channels.length>0;
+  // Depois de redesenhar a grade, devolve o foco para onde estava (senão o controle "perde" a posição).
+  if(focoId&&foco&&!document.body.contains(foco)){
+    var volta=document.querySelector('#channels .card[data-id="'+CSS.escape(focoId)+'"]')||document.querySelector('#groups [data-g="'+CSS.escape(focoId)+'"]')||(focoId==="resume"&&$("resume"));
+    if(volta)volta.focus();
+  }
+}
+function allVideos(){return localVideos.concat(S.videos)}
+function renderVideos(){
+  var v=allVideos();
+  $("videos").innerHTML=v.map(function(x){return card(x,0,false)}).join("");
+  $("videos-empty").hidden=v.length>0;
+}
+/* ---------- seções novas: Doramas e Novos ---------- */
+var SETE_DIAS=7*24*60*60*1000;
+function ehNovo(c){return c.novoEm&&(Date.now()-c.novoEm)<SETE_DIAS}
+function renderDoramas(){
+  var list=S.channels.filter(function(c){return c.group==="Doramas"||c.group==="Coreia"});
+  var html=list.map(function(c){return card(c,S.channels.indexOf(c)+1,true)}).join("");
+  $("doramas").innerHTML=html;
+  $("doramas-empty").hidden=list.length>0;
+}
+function renderNovos(){
+  var list=S.channels.filter(ehNovo);
+  var html=list.map(function(c){return card(c,S.channels.indexOf(c)+1,true)}).join("");
+  $("novos").innerHTML=html;
+  $("novos-empty").hidden=list.length>0;
+}
+function renderSources(){
+  $("sources").innerHTML=S.sources.map(function(s){return '<li><span>'+esc(s.label)+'</span><span>'+s.count+' canais</span></li>'}).join("");
+}
+function renderAll(){renderBrand();renderLive();renderDoramas();renderNovos();renderVideos();renderSources()}
+
+/* ---------- abas ---------- */
+function setTab(t){
+  tab=t;
+  document.querySelectorAll(".tab").forEach(function(b){b.setAttribute("aria-selected",b.dataset.tab===t)});
+  ["live","doramas","novos","videos","settings"].forEach(function(k){$("tab-"+k).hidden=k!==t});
+  if(t==="doramas")renderDoramas();
+  if(t==="novos")renderNovos();
+}
+document.querySelector(".tabs").addEventListener("click",function(e){var b=e.target.closest(".tab");if(b)setTab(b.dataset.tab)});
+
+$("groups").addEventListener("click",function(e){var b=e.target.closest(".chip");if(!b)return;if(b.id==="resume"){openById(S.ultimo,"live");return}group=b.dataset.g;renderLive();var again=document.querySelector('.chip[data-g="'+CSS.escape(group)+'"]');if(again)again.focus()});
+$("q").addEventListener("input",function(){query=this.value.trim().toLowerCase();renderLive()});
+$("channels").addEventListener("click",function(e){var b=e.target.closest(".card");if(b)openById(b.dataset.id,"live")});
+$("doramas").addEventListener("click",function(e){var b=e.target.closest(".card");if(b)openById(b.dataset.id,"doramas")});
+$("novos").addEventListener("click",function(e){var b=e.target.closest(".card");if(b)openById(b.dataset.id,"novos")});
+$("videos").addEventListener("click",function(e){var b=e.target.closest(".card");if(b)openById(b.dataset.id,"videos")});
+
+/* ---------- ajustes ---------- */
+$("m3u-load").onclick=function(){var u=$("m3u-url").value.trim();if(!/^https?:\/\//i.test(u)){status("m3u-status","Cole um link começando com http:// ou https://");return}fetchList(u,u,"m3u-status")};
+$("m3u-file").onchange=function(){var f=this.files[0];if(!f)return;var r=new FileReader();r.onload=function(){addList(String(r.result),f.name,"m3u-status")};r.readAsText(f);this.value=""};
+/* ---------- canais abertos automáticos ---------- */
+function hhmm(ts){var d=new Date(ts);return String(d.getHours()).padStart(2,"0")+":"+String(d.getMinutes()).padStart(2,"0")}
+function loadAuto(force){
+  if(!HAS_SERVER)return;
+  fetch("/canais"+(force?"?forcar=1":"")).then(function(r){return r.json()}).then(function(j){
+    if(j.canais&&j.canais.length){
+      var own=S.channels.filter(function(c){return c.src!=="auto"});
+      var playing=current&&current.item.src==="auto"?current.item.id:null;
+      var auto=j.canais.map(function(c){return {id:"a-"+c.id,name:c.name,logo:c.logo,group:c.group,url:c.url,ref:c.ref,ua:c.ua,alts:c.alts||[],src:"auto"}});
+      S.channels=auto.concat(own);S.autoTs=j.atualizado;
+      S.sources=S.sources.filter(function(s){return !/iptv-org|Free-TV|Canais abertos/.test(s.label)});
+      save();
+      if(current&&playing){for(var i=0;i<auto.length;i++)if(auto[i].id===playing){current.item=auto[i];break}}
+      if($("player").hidden)renderAll();
+    }
+    var msg=j.atualizando?(j.total?"Conferindo os links de novo… ":"Montando a lista pela primeira vez, leva uns minutos… "):"";
+    if(j.atualizado)msg+=j.total+" canais abertos no ar · conferidos às "+hhmm(j.atualizado);
+    status("auto-status",msg);
+    if(!testing)status("test-status",j.atualizado?j.total+" canais abertos · lista de "+hhmm(j.atualizado):msg);
+    if(j.atualizando)setTimeout(function(){loadAuto(false)},20000);
+  }).catch(function(){status("auto-status","Não consegui falar com o servidor agora. Os canais salvos continuam aqui.")});
+}
+$("auto-refresh").onclick=function(){status("auto-status","Pedindo ao servidor para conferir os links…");loadAuto(true)};
+$("onlyok").onclick=function(){S.onlyOk=!S.onlyOk;this.setAttribute("aria-pressed",!!S.onlyOk);save();renderLive()};
+$("test").onclick=testAll;
+function relayUrl(item,path){var q=(path||"/p")+"?u="+encodeURIComponent(item.url);if(item.ref)q+="&r="+encodeURIComponent(item.ref);if(item.ua)q+="&a="+encodeURIComponent(item.ua);return q}
+function testAll(){
+  if(testing||!S.channels.length)return;
+  if(!HAS_SERVER){status("test-status","O teste precisa do servidor (abra pelo endereço do Railway).");return}
+  testing=true;var list=S.channels.filter(function(c){return !ehPluto(c)}),i=0,done=0,ok=0;
+  status("test-status","Testando 0 de "+list.length+"…");
+  function next(){
+    if(i>=list.length)return;var c=list[i++];
+    fetch(relayUrl(c,"/check")).then(function(r){return r.json()}).then(function(j){marcar(c,!!j.ok);if(j.ok)ok++}).catch(function(){marcar(c,false)})
+    .then(function(){done++;status("test-status","Testando "+done+" de "+list.length+"… "+ok+" no ar");
+      if(done===list.length){testing=false;S.testeTs=Date.now();save();renderLive();status("test-status",ok+" de "+list.length+" canais no ar (Pluto TV fica de fora: o teste é feito fora do Brasil)")}else next()});
+  }
+  for(var k=0;k<8;k++)next();
+}
+function manual(kind){
+  var n=$("m-name").value.trim(),u=$("m-url").value.trim(),g=$("m-group").value.trim()||"Meus canais";
+  if(!n||!/^https?:\/\//i.test(u)){status("m-status","Preencha o nome e um link começando com http:// ou https://");return}
+  var item={id:uid(),name:n,url:u,logo:"",group:g,src:"manual"};
+  if(kind==="channel")S.channels.push(item);else S.videos.push(item);
+  save();renderAll();$("m-name").value=$("m-url").value="";
+  status("m-status",kind==="channel"?"Canal salvo na aba Ao vivo.":"Vídeo salvo em Meus vídeos.");
+}
+$("add-channel").onclick=function(){manual("channel")};
+$("add-video").onclick=function(){manual("video")};
+$("save-name").onclick=function(){S.name=$("sys-name").value.trim()||NOME;save();renderBrand();status("sys-status","Nome salvo.")};
+var wipeArmed=false;
+$("wipe").onclick=function(){
+  if(!wipeArmed){wipeArmed=true;this.textContent="Confirmar: apagar tudo";status("sys-status","Isso remove canais, listas e vídeos salvos. Aperte de novo para confirmar.");return}
+  S=JSON.parse(JSON.stringify(DEFAULT));save();renderAll();wipeArmed=false;this.textContent="Apagar tudo";status("sys-status","Tudo apagado.");
+};
+$("files").onchange=function(){
+  Array.prototype.forEach.call(this.files,function(f){localVideos.push({id:uid(),name:f.name.replace(/\.[^.]+$/,""),url:URL.createObjectURL(f),logo:"",group:"Arquivo",src:"local"})});
+  this.value="";renderVideos();
+};
+document.querySelectorAll("label.btn").forEach(function(l){l.addEventListener("keydown",function(e){if(e.key==="Enter"||e.keyCode===13){e.preventDefault();$(l.htmlFor).click()}})});
+
+/* ---------- player ---------- */
+var video=$("video");
+function listFor(kind){return kind==="live"?S.channels:allVideos()}
+function openById(id,kind){var l=listFor(kind);for(var i=0;i<l.length;i++)if(l[i].id===id){play(l[i],kind);return}}
+function stop(){carregando(false);if(hls){hls.destroy();hls=null}video.removeAttribute("src");video.load()}
+function needsRelay(item){return !!S.relay||!!(item.ref||item.ua)||(location.protocol==="https:"&&/^http:/i.test(item.url))}
+var skipTimer=null,lastStep=1;
+function ehPluto(item){return /^a-pluto:/.test(item.id||"")||/pluto\.tv|jmp2\.uk\/plu-/i.test(item.url||"")}
+/* Pluto TV: antes de mostrar erro, pede links novos ao servidor e tenta de novo (uma vez a cada 2 minutos por canal). */
+var renovadoEm={};
+function renovarPluto(c){
+  var id=c.item.id;renovadoEm[id]=Date.now();
+  stop();$("perr-title").textContent=c.item.name;$("perr-why").textContent="Buscando um link novo do Pluto TV…";$("perr-next").textContent="";$("perr").hidden=false;
+  fetch("/falhou?id="+encodeURIComponent(id.replace(/^a-/,""))).catch(function(){}).then(function(){
+    return new Promise(function(ok){setTimeout(ok,4000)});
+  }).then(function(){return fetch("/canais").then(function(r){return r.json()})}).then(function(j){
+    if(current!==c)return;
+    var achado=null;(j.canais||[]).forEach(function(x){if("a-"+x.id===id)achado=x});
+    if(!achado){giveUp(c);return}
+    var novo={id:id,name:achado.name,logo:achado.logo,group:achado.group,url:achado.url,ref:achado.ref,ua:achado.ua,alts:achado.alts||[],src:"auto"};
+    var i=S.channels.indexOf(c.item);if(i>-1)S.channels[i]=novo;save();
+    play(novo,c.kind);
+  }).catch(function(){if(current===c)giveUp(c)});
+}
+function motivoAmigavel(m,item){
+  if(ehPluto(item)&&/401|403/.test(m))return "O Pluto TV não liberou este canal agora, nem com o link novo. Pode ser instabilidade do próprio Pluto; tente de novo em alguns minutos.";
+  if(/403|401/.test(m))return "A emissora recusou a conexão. Costuma ser bloqueio para fora do Brasil ou exigência de assistir pelo site dela.";
+  if(/404|variante/.test(m))return "O endereço do canal saiu do ar.";
+  if(/sem resposta/.test(m))return "A emissora não respondeu a tempo.";
+  if(/conexão/.test(m))return "Não foi possível conectar ao servidor da emissora.";
+  if(/página/.test(m))return "Esse canal só passa no site ou no YouTube da emissora.";
+  if(/^HTTP 5/.test(m))return "O servidor da emissora está com problema agora.";
+  return "O vídeo não carregou neste aparelho.";
+}
+function fail(){
+  var c=current;if(!c)return;
+  // 1) tenta pelo servidor; 2) passa para o próximo link reserva do mesmo canal; 3) desiste e explica
+  if(!c.relay&&HAS_SERVER&&c.item.src!=="local"){play(c.item,c.kind,true,c.alt);return}
+  if(c.alt<(c.item.alts||[]).length){play(c.item,c.kind,false,c.alt+1);return}
+  if(ehPluto(c.item)&&HAS_SERVER&&Date.now()-(renovadoEm[c.item.id]||0)>2*60*1000){renovarPluto(c);return}
+  giveUp(c);
+}
+function giveUp(c){
+  stop();
+  $("perr-title").textContent=c.item.name+" não abriu agora";
+  $("perr-why").textContent="Tentei o link direto, pelo servidor e "+((c.item.alts||[]).length?(c.item.alts.length+" link(s) reserva."):"não há link reserva.");
+  $("perr").hidden=false;
+  if(c.item.src!=="local")marcar(c.item,false);else c.item.dead=true;save();
+  if(HAS_SERVER&&c.item.src!=="local"){
+    fetch(relayUrl(c.item,"/check")).then(function(r){return r.json()}).then(function(j){if(current===c&&!j.ok)$("perr-why").textContent=motivoAmigavel(j.motivo||"",c.item)}).catch(function(){});
+    if(c.item.src==="auto")fetch("/falhou?id="+encodeURIComponent(c.item.id.replace(/^a-/,""))).then(function(r){return r.json()}).then(function(j){if(j.removido)loadAuto(false)}).catch(function(){});
+  }
+  if(c.kind!=="live")return;
+  var n=5;
+  (function tickSkip(){
+    if(current!==c)return;
+    $("perr-next").textContent="Indo para o próximo canal em "+n+"… (Voltar cancela)";
+    if(n--<=0){skipNext(c);return}
+    skipTimer=setTimeout(tickSkip,1000);
+  })();
+}
+function skipNext(c){
+  var l=listFor("live"),i=l.indexOf(c.item);
+  for(var k=1;k<=l.length;k++){var x=l[((i+lastStep*k)%l.length+l.length)%l.length];if(!parado(x)&&liberado(x)){play(x,"live");return}}
+}
+function play(item,kind,forceRelay,alt){
+  if(recarregar&&kind==="live"){try{sessionStorage.setItem("tl.retomar",item.id)}catch(e){}location.reload();return}
+  if(kind==="live"&&!liberado(item)){
+    pedirPin(item.name+" está bloqueado","Digite a senha de 4 números para assistir.",function(){desbloqueados[item.id]=1;play(item,kind,forceRelay,alt)});
+    return;
+  }
+  var trocou=kind==="live"&&!(current&&current.item.id===item.id);
+  stop();clearTimeout(skipTimer);$("perr-next").textContent="";
+  if(trocou){
+    if(current&&current.kind==="live")S.anterior=current.item.id;
+    S.ultimo=item.id;lembrarRecente(item);save();
+  }
+  alt=alt||0;var src=alt?item.alts[alt-1]:item;
+  var relay=HAS_SERVER&&item.src!=="local"&&(forceRelay||needsRelay(src));
+  current={item:item,kind:kind,relay:relay,alt:alt};$("perr").hidden=true;$("player").hidden=false;
+  var isHls=/\.m3u8?(\?|$)/i.test(src.url)||kind==="live"&&!/\.(mp4|webm|mkv|mov|mp3|aac)(\?|$)/i.test(src.url);
+  var u=relay?relayUrl(src):src.url;
+  jaTocou=false;ultimoTempo=-1;paradoDesde=Date.now();socorros=0;midiaTent=0;redeTent=0;andandoDesde=0;
+  carregando(true,"Abrindo "+item.name+"…");
+  if(isHls&&!video.canPlayType("application/vnd.apple.mpegurl")&&window.Hls&&Hls.isSupported()){
+    /* Ajustes de estabilidade, parecidos com os de serviços de streaming: buffer de até 30 s,
+       distância segura do "ao vivo", qualidade que se adapta à internet e mais tentativas antes de desistir. */
+    hls=new Hls(cfgHls(item));
+    hls.on(Hls.Events.ERROR,function(_,d){
+      if(!d.fatal)return;
+      // erro de imagem: o hls.js se recupera sem trocar de link (até 2 vezes seguidas; o vigia zera a conta
+      // depois de 1 minuto passando, senão o terceiro intervalo comercial do Pluto derrubava o canal)
+      if(d.type===Hls.ErrorTypes.MEDIA_ERROR&&midiaTent<2){if(midiaTent++)hls.swapAudioCodec();hls.recoverMediaError();return}
+      // queda de rede no meio do canal que já estava passando: tenta continuar antes de trocar de link
+      if(d.type===Hls.ErrorTypes.NETWORK_ERROR&&jaTocou&&redeTent<2){redeTent++;setTimeout(function(){if(hls)hls.startLoad()},1500);return}
+      fail();
+    });
+    hls.on(Hls.Events.MANIFEST_PARSED,aplicarQualidade);
+    hls.loadSource(u);hls.attachMedia(video);
+  }else{video.src=u}
+  var p=video.play();if(p&&p.catch)p.catch(function(){});
+  var l=listFor(kind),n=l.indexOf(item)+1;
+  $("o-num").textContent=kind==="live"?String(n).padStart(3,"0"):"";
+  $("o-title").textContent=item.name;
+  $("o-group").textContent=kind==="live"?item.group:"";
+  $("o-live").hidden=kind!=="live";
+  $("o-fav").hidden=!(kind==="live"&&ehFav(item));
+  renderEpgOsd();
+  if(!$("plist").hidden)renderPlist(true);
+  showOsd();
+}
+video.addEventListener("error",function(){if(!hls&&current&&video.getAttribute("src"))fail()});
+video.addEventListener("playing",function(){carregando(false);jaTocou=true;$("perr").hidden=true;if(current&&current.item.src!=="local"&&(current.item.dead||resultado()[current.item.id]===false)){marcar(current.item,true);save()}});
+/* Vigia de travamento: se a imagem parar e houver vídeo carregado logo à frente (buraco comum na troca
+   entre programa e intervalo), pula o buraco; se parar por 10 s, tenta destravar; se seguir parada por 25 s,
+   passa para o próximo link do canal (ou para o servidor), como fazem os apps de streaming. */
+var jaTocou=false,ultimoTempo=-1,paradoDesde=0,socorros=0,midiaTent=0,redeTent=0,andandoDesde=0;
+function pularBuraco(){
+  var b=video.buffered,t=video.currentTime;
+  for(var i=0;i<b.length;i++){
+    if(b.start(i)<=t+0.05&&b.end(i)>t+0.5)return false; // há vídeo onde está: não é buraco
+    if(b.start(i)>t&&b.start(i)-t<6){video.currentTime=b.start(i)+0.1;return true}
+  }
+  return false;
+}
+setInterval(function(){
+  if(!current||$("player").hidden||video.paused&&jaTocou)return;
+  var t=video.currentTime;
+  if(t!==ultimoTempo){ultimoTempo=t;paradoDesde=Date.now();socorros=0;
+    if(!andandoDesde)andandoDesde=Date.now();else if(Date.now()-andandoDesde>60000){midiaTent=0;redeTent=0}
+    return}
+  andandoDesde=0;
+  var parado=Date.now()-paradoDesde;
+  if(socorros===0&&pularBuraco())return;
+  if(parado>10000&&socorros===0){socorros=1;
+    if(hls){hls.startLoad();try{hls.recoverMediaError()}catch(e){}}
+    else{var tt=video.currentTime;video.load();video.currentTime=tt;var p=video.play();if(p&&p.catch)p.catch(function(){})}
+  }else if(parado>25000&&socorros===1){socorros=2;fail()}
+},2500);
+/* ---------- streams: modos de folga, carregando, informações e teste de internet ---------- */
+/* Três jeitos de segurar o vídeo. "Estável" guarda mais vídeo de folga, fica mais longe do ao vivo
+   e começa numa qualidade menor; "Rápido" abre e troca de canal mais depressa com pouca folga. */
+var MODOS={
+  estavel:{backBufferLength:30,maxBufferLength:60,maxMaxBufferLength:120,liveSyncDurationCount:6,liveMaxLatencyDurationCount:18,
+    startLevel:0,abrEwmaDefaultEstimate:800000,abrBandWidthFactor:0.8,abrBandWidthUpFactor:0.6,maxBufferHole:1,
+    fragLoadingMaxRetry:10,levelLoadingMaxRetry:6,manifestLoadingMaxRetry:4,nudgeMaxRetry:10,maxStarvationDelay:6,maxLoadingDelay:6},
+  normal:{backBufferLength:30,maxBufferLength:30,maxMaxBufferLength:60,liveSyncDurationCount:4,liveMaxLatencyDurationCount:12,
+    startLevel:-1,abrEwmaDefaultEstimate:1500000,maxBufferHole:0.5,
+    fragLoadingMaxRetry:6,levelLoadingMaxRetry:4,manifestLoadingMaxRetry:3,nudgeMaxRetry:6},
+  rapido:{backBufferLength:15,maxBufferLength:15,maxMaxBufferLength:30,liveSyncDurationCount:3,liveMaxLatencyDurationCount:8,
+    startLevel:-1,abrEwmaDefaultEstimate:3000000,maxBufferHole:0.5,
+    fragLoadingMaxRetry:4,levelLoadingMaxRetry:3,manifestLoadingMaxRetry:2,nudgeMaxRetry:4}
+};
+var NOME_MODO={estavel:"Estável",normal:"Equilibrado",rapido:"Rápido"};
+function modo(){return MODOS[S.modo]?S.modo:"normal"}
+function cfgHls(item){
+  var c={enableWorker:true,lowLatencyMode:false,capLevelToPlayerSize:true,manifestLoadingRetryDelay:1000,levelLoadingRetryDelay:1000,fragLoadingRetryDelay:800};
+  var m=MODOS[modo()];for(var k in m)c[k]=m[k];
+  // Streams internacionais (doramas, Pluto fora do BR, Arirang): latência alta trava com buffer curto.
+  // Aplica o perfil estável mesmo que o usuário esteja no modo equilibrado/rápido.
+  if(item&&ehInternacional(item)){var e=MODOS.estavel;for(var k2 in e)c[k2]=e[k2];}
+  return c;
+}
+/* Canal com servidor fora do Brasil: tende a oscilar e precisa de mais folga no buffer. */
+function ehInternacional(item){
+  var u=(item.url||"")+" "+((item.alts||[]).map(function(a){return a.url}).join(" "));
+  return /dorama:/i.test(item.id||"")||/\.prd\.pluto\.tv|akamaized\.net\/arirang/i.test(u);
+}
+var loadTimer=null;
+function carregando(on,txt){
+  clearTimeout(loadTimer);
+  if(!on){$("loading").hidden=true;return}
+  if(txt)$("loading-txt").textContent=txt;
+  loadTimer=setTimeout(function(){if(current&&!$("player").hidden)$("loading").hidden=false},600);
+}
+video.addEventListener("waiting",function(){if(jaTocou)carregando(true,"Segurando o vídeo para não travar…")});
+video.addEventListener("canplay",function(){if(!video.paused)carregando(false)});
+function folga(){var b=video.buffered,t=video.currentTime;for(var i=0;i<b.length;i++)if(b.start(i)<=t+0.3&&b.end(i)>=t)return Math.max(0,b.end(i)-t);return 0}
+function mbps(bits){return bits?(bits/1e6).toFixed(bits<1e7?1:0)+" Mbps":"—"}
+function infoStream(){
+  var lv=hls&&hls.levels&&hls.currentLevel>=0?hls.levels[hls.currentLevel]:null;
+  var linhas=[
+    ["Imagem",video.videoHeight?video.videoWidth+"×"+video.videoHeight:"—"],
+    ["Taxa do canal",lv?mbps(lv.bitrate):"—"],
+    ["Sua internet (estimada)",hls&&hls.bandwidthEstimate?mbps(hls.bandwidthEstimate):"—"],
+    ["Folga guardada",folga().toFixed(0)+" s"],
+    ["Modo",NOME_MODO[modo()]+(S.qual?" · até "+S.qual+"p":"")],
+    ["Caminho",current&&current.relay?"pelo servidor":"direto da emissora"]
+  ];
+  return '<div class="sec">Informações do stream</div><div class="stats">'+linhas.map(function(l){return '<span>'+l[0]+'</span><b>'+esc(l[1])+'</b>'}).join("")+'</div>';
+}
+function renderStreams(){
+  Array.prototype.forEach.call(document.querySelectorAll("#modos .modo"),function(b){b.setAttribute("aria-pressed",b.dataset.m===modo())});
+  Array.prototype.forEach.call(document.querySelectorAll("#qmax .chip"),function(b){b.setAttribute("aria-pressed",String(+b.dataset.q===(S.qual||0)))});
+  $("sempre-relay").setAttribute("aria-pressed",!!S.relay);
+}
+$("modos").addEventListener("click",function(e){var b=e.target.closest(".modo");if(!b)return;S.modo=b.dataset.m;save();renderStreams();status("speed-status","Modo "+NOME_MODO[S.modo]+" ligado. Vale a partir do próximo canal que você abrir.")});
+$("qmax").addEventListener("click",function(e){var b=e.target.closest(".chip");if(!b)return;S.qual=+b.dataset.q||0;save();aplicarQualidade();renderStreams()});
+$("sempre-relay").onclick=function(){S.relay=!S.relay;save();renderStreams()};
+/* Teste de internet: baixa 4 MB do servidor da TV e mede quanto tempo levou. */
+var recomendado=null;
+$("speed-test").onclick=function(){
+  if(!HAS_SERVER){status("speed-status","O teste precisa do servidor (abra pelo endereço do Railway).");return}
+  var btn=this;btn.disabled=true;status("speed-status","Medindo… leva alguns segundos.");$("speed-val").hidden=true;$("speed-apply").hidden=true;
+  var t0=performance.now();
+  fetch("/velocidade?t="+Date.now(),{cache:"no-store"}).then(function(r){if(!r.ok)throw new Error("HTTP "+r.status);return r.arrayBuffer()}).then(function(buf){
+    var seg=(performance.now()-t0)/1000,v=buf.byteLength*8/seg/1e6;
+    $("speed-val").innerHTML=v.toFixed(v<10?1:0)+' <small>Mbps</small>';$("speed-val").hidden=false;
+    if(v<4)recomendado={m:"estavel",q:480,txt:"Internet fraca para vídeo: recomendo o modo Estável com até 480p."};
+    else if(v<10)recomendado={m:"estavel",q:720,txt:"Dá para assistir bem em HD: recomendo o modo Estável com até 720p."};
+    else if(v<40)recomendado={m:"normal",q:0,txt:"Internet boa: o modo Equilibrado com qualidade automática deve rodar liso."};
+    else recomendado={m:"rapido",q:0,txt:"Internet muito boa: o modo Rápido troca de canal mais depressa sem travar."};
+    status("speed-status",recomendado.txt+" (medido até o servidor da TV; o link direto das emissoras costuma ser mais rápido)");
+    $("speed-apply").hidden=false;
+  }).catch(function(){status("speed-status","Não consegui medir agora. Confira a internet da TV e tente de novo.")}).then(function(){btn.disabled=false});
+};
+$("speed-apply").onclick=function(){if(!recomendado)return;S.modo=recomendado.m;S.qual=recomendado.q;save();aplicarQualidade();renderStreams();this.hidden=true;status("speed-status","Pronto: modo "+NOME_MODO[S.modo]+(S.qual?" com até "+S.qual+"p":" com qualidade automática")+".")};
+
+function showOsd(){var o=$("osd");o.classList.remove("hide");clearTimeout(osdTimer);osdTimer=setTimeout(function(){o.classList.add("hide")},4000)}
+function zap(step){if(!current)return;lastStep=step;var l=listFor(current.kind);if(!l.length)return;var i=(l.indexOf(current.item)+step+l.length)%l.length;play(l[i],current.kind)}
+function closePlayer(){
+  if(recarregar){location.reload();return}
+  stop();clearTimeout(skipTimer);fecharPaineis();$("player").hidden=true;
+  var id=current&&current.item.id;current=null;
+  renderLive(); // atualiza "Continuar", "Recentes" e favoritos antes de devolver o foco
+  var back=(id&&document.querySelector('#channels .card[data-id="'+CSS.escape(id)+'"]'))||$("resume");
+  if(back)back.focus();
+}
+$("pclose").onclick=closePlayer;
+$("player").addEventListener("click",function(e){if(e.target===video){if(painelAberto())fecharPaineis();else showOsd()}});
+
+/* ---------- guia (Agora / A seguir) no OSD ---------- */
+function renderEpgOsd(){
+  var el=$("o-epg"),g=current&&current.kind==="live"?guiaDe(current.item):null;
+  if(!g){el.hidden=true;el.innerHTML="";return}
+  var h="",t=Date.now();
+  if(g.cur){var pct=Math.max(0,Math.min(100,(t-g.cur.s)/(g.cur.e-g.cur.s)*100));
+    h+='<div><strong>Agora:</strong> '+esc(g.cur.t)+' <span class="next">· '+hm(g.cur.s)+'–'+hm(g.cur.e)+'</span></div><span class="bar"><i style="width:'+pct.toFixed(1)+'%"></i></span>'}
+  if(g.nxt)h+='<div class="next">A seguir, às '+hm(g.nxt.s)+': '+esc(g.nxt.t)+'</div>';
+  el.innerHTML=h;el.hidden=false;
+}
+
+/* ---------- lista de canais por cima do vídeo ---------- */
+function painelAberto(){return !$("plist").hidden||!$("popts").hidden}
+function fecharPaineis(){$("plist").hidden=true;$("popts").hidden=true}
+function listaDoPainel(){
+  var l=filtered();
+  if(current&&l.indexOf(current.item)<0)l=S.channels;
+  return l;
+}
+function renderPlist(focar){
+  var l=listaDoPainel(),cid=current&&current.item.id;
+  $("plist-title").textContent=l===S.channels||group==="Todos"?"Canais":group;
+  $("plist-items").innerHTML=l.map(function(c){
+    var g=trancado(c)?null:guiaDe(c),sub=g&&g.cur?"Agora: "+g.cur.t:(c.group||"");
+    return '<button class="prow f" data-id="'+esc(c.id)+'" aria-current="'+(c.id===cid)+'"><span class="num">'+String(S.channels.indexOf(c)+1).padStart(3,"0")+'</span>'+
+      '<span class="txt"><span class="nm">'+(ehFav(c)?'<span class="favstar">★</span> ':'')+(trancado(c)?'🔒 ':'')+esc(c.name)+'</span><span class="sm">'+esc(sub)+'</span></span></button>';
+  }).join("");
+  if(focar){var a=$("plist-items").querySelector('[aria-current="true"]')||$("plist-items").querySelector(".prow");if(a){a.focus();a.scrollIntoView({block:"center"})}}
+}
+function abrirLista(){if(!current||current.kind!=="live")return;$("popts").hidden=true;$("plist").hidden=false;renderPlist(true);$("osd").classList.add("hide")}
+$("plist-items").addEventListener("click",function(e){var b=e.target.closest(".prow");if(!b)return;var c=byId(b.dataset.id);if(c){fecharPaineis();play(c,"live")}});
+
+/* ---------- opções: favorito, canal anterior, qualidade, áudio, legenda, bloqueio ---------- */
+function linha(acao,nome,val,ligado){return '<button class="prow f" data-a="'+esc(acao)+'"><span class="txt"><span class="nm">'+esc(nome)+'</span></span>'+(val?'<span class="val'+(ligado?' on':'')+'">'+esc(val)+'</span>':'')+'</button>'}
+function faixasAudio(){
+  if(hls&&hls.audioTracks&&hls.audioTracks.length>1)return hls.audioTracks.map(function(t,i){return {i:i,nome:t.name||t.lang||("Áudio "+(i+1)),on:hls.audioTrack===i}});
+  var a=video.audioTracks;if(a&&a.length>1){var o=[];for(var i=0;i<a.length;i++)o.push({i:i,nome:a[i].label||a[i].language||("Áudio "+(i+1)),on:a[i].enabled});return o}
+  return [];
+}
+function faixasLegenda(){
+  if(hls&&hls.subtitleTracks&&hls.subtitleTracks.length)return hls.subtitleTracks.map(function(t,i){return {i:i,nome:t.name||t.lang||("Legenda "+(i+1)),on:hls.subtitleTrack===i}});
+  var o=[],tt=video.textTracks;for(var i=0;tt&&i<tt.length;i++)if(/subtitles|captions/.test(tt[i].kind))o.push({i:i,nome:tt[i].label||tt[i].language||("Legenda "+(i+1)),on:tt[i].mode==="showing"});
+  return o;
+}
+function alturas(){
+  if(!hls||!hls.levels)return [];
+  var h=[];hls.levels.forEach(function(l){if(l.height&&h.indexOf(l.height)<0)h.push(l.height)});
+  return h.sort(function(a,b){return b-a});
+}
+/* Qualidade escolhida vira um teto: a TV continua baixando a qualidade sozinha se a internet piorar. */
+function aplicarQualidade(){
+  if(!hls||!hls.levels||!hls.levels.length)return;
+  if(!S.qual){hls.autoLevelCapping=-1;return}
+  var idx=-1,menor=0;
+  hls.levels.forEach(function(l,i){if(l.height<hls.levels[menor].height)menor=i;if(l.height&&l.height<=S.qual&&(idx<0||l.height>hls.levels[idx].height))idx=i});
+  hls.autoLevelCapping=idx<0?menor:idx;
+}
+function renderOpts(focoAcao){
+  if(!current)return;
+  var it=current.item,live=current.kind==="live",h="";
+  if(live){
+    h+=linha("fav","Favorito",ehFav(it)?"★ Sim":"Não",ehFav(it));
+    var ant=S.anterior&&byId(S.anterior);
+    if(ant&&ant.id!==it.id)h+=linha("ant","Voltar ao canal anterior",ant.name);
+  }
+  var hs=alturas();
+  h+='<div class="sec">Qualidade</div>';
+  if(hs.length>1){
+    h+=linha("q:0","Automática",S.qual?"":"●",!S.qual);
+    hs.forEach(function(x){h+=linha("q:"+x,"Até "+x+"p",S.qual===x?"●":"",S.qual===x)});
+  }else h+='<div class="foot" style="padding-top:0">'+(hls?"Este canal tem uma qualidade só.":"Neste aparelho a própria TV escolhe a qualidade.")+'</div>';
+  var au=faixasAudio();
+  if(au.length){h+='<div class="sec">Áudio</div>';au.forEach(function(a){h+=linha("a:"+a.i,a.nome,a.on?"●":"",a.on)})}
+  var lg=faixasLegenda();
+  if(lg.length){
+    var algum=lg.some(function(x){return x.on});
+    h+='<div class="sec">Legenda</div>'+linha("s:-1","Desligada",algum?"":"●",!algum);
+    lg.forEach(function(x){h+=linha("s:"+x.i,x.nome,x.on?"●":"",x.on)});
+  }
+  h+=infoStream();
+  if(live){
+    h+='<div class="sec">Bloqueio parental</div>';
+    var auto=S.pin&&(ADULTO.test(it.group||"")||ADULTO.test(it.name||""));
+    var tr=arr("bloq").indexOf(it.id)>-1;
+    if(auto)h+='<div class="foot" style="padding-top:0">Canal de conteúdo adulto: fica sempre trancado enquanto houver senha.</div>';
+    else h+=linha("lock",tr?"Destrancar este canal":"Trancar este canal",tr?"🔒":"");
+  }
+  $("popts-items").innerHTML=h;
+  var g=live&&!trancado(it)?guiaDe(it):null;
+  $("popts-foot").innerHTML=g&&g.cur&&g.cur.d?'<strong>'+esc(g.cur.t)+'</strong><br>'+esc(g.cur.d):"";
+  var f=(focoAcao&&$("popts-items").querySelector('[data-a="'+CSS.escape(focoAcao)+'"]'))||$("popts-items").querySelector(".prow");
+  if(f)f.focus();
+}
+function abrirOpcoes(){if(!current)return;$("plist").hidden=true;$("popts").hidden=false;renderOpts();$("osd").classList.add("hide")}
+function msgOpcoes(t){$("popts-foot").textContent=t}
+$("popts-items").addEventListener("click",function(e){
+  var b=e.target.closest(".prow");if(!b||!current)return;
+  var a=b.dataset.a,it=current.item,n=parseInt(a.split(":")[1],10);
+  if(a==="fav"){alternar("favs",it.id);$("o-fav").hidden=!ehFav(it);renderOpts(a);return}
+  if(a==="ant"){var ant=byId(S.anterior);fecharPaineis();if(ant)play(ant,"live");return}
+  if(a.indexOf("q:")===0){S.qual=n||0;save();aplicarQualidade();renderStreams();renderOpts(a);return}
+  if(a.indexOf("a:")===0){if(hls&&hls.audioTracks&&hls.audioTracks.length>1)hls.audioTrack=n;else if(video.audioTracks)for(var i=0;i<video.audioTracks.length;i++)video.audioTracks[i].enabled=i===n;renderOpts(a);return}
+  if(a.indexOf("s:")===0){
+    if(hls&&hls.subtitleTracks&&hls.subtitleTracks.length){hls.subtitleDisplay=n>=0;hls.subtitleTrack=n}
+    else{var tt=video.textTracks;for(var k=0;tt&&k<tt.length;k++)if(/subtitles|captions/.test(tt[k].kind))tt[k].mode=k===n?"showing":"disabled"}
+    renderOpts(a);return;
+  }
+  if(a==="lock"){
+    if(!S.pin){msgOpcoes("Primeiro crie uma senha em Ajustes › Bloqueio parental.");return}
+    if(arr("bloq").indexOf(it.id)>-1){pedirPin("Destrancar "+it.name,"Digite a senha para destrancar o canal.",function(){alternar("bloq",it.id);renderOpts("lock")});return}
+    alternar("bloq",it.id);desbloqueados[it.id]=1;renderOpts(a);msgOpcoes("Canal trancado. Da próxima vez ele vai pedir a senha.");return;
+  }
+});
+
+/* ---------- senha (PIN) ---------- */
+var pinBuf="",pinOk=null,pinVolta=null;
+$("pin-keys").innerHTML=["1","2","3","4","5","6","7","8","9","Cancelar","0","Apagar"].map(function(k){return '<button class="btn ghost f" data-k="'+k+'">'+k+'</button>'}).join("");
+function desenharPin(){Array.prototype.forEach.call($("pin-dots").children,function(d,i){d.classList.toggle("on",i<pinBuf.length)})}
+function pedirPin(titulo,sub,ok){
+  pinBuf="";pinOk=ok;pinVolta=document.activeElement;
+  $("pin-title").textContent=titulo;$("pin-sub").textContent=sub;$("pin-msg").textContent="";desenharPin();
+  $("pin").hidden=false;$("pin-keys").querySelector("button").focus();
+}
+function fecharPin(){$("pin").hidden=true;pinOk=null;if(pinVolta&&document.body.contains(pinVolta)&&pinVolta.offsetParent!==null)pinVolta.focus()}
+function pinDigito(d){
+  if(pinBuf.length>=4)return;pinBuf+=d;desenharPin();
+  if(pinBuf.length<4)return;
+  if(pinBuf===S.pin){var f=pinOk;fecharPin();if(f)f()}
+  else{$("pin-msg").textContent="Senha errada. Tente de novo.";pinBuf="";setTimeout(desenharPin,250)}
+}
+$("pin-keys").addEventListener("click",function(e){
+  var b=e.target.closest("button");if(!b)return;var k=b.dataset.k;
+  if(k==="Cancelar")fecharPin();else if(k==="Apagar"){pinBuf=pinBuf.slice(0,-1);desenharPin()}else pinDigito(k);
+});
+function infoPin(){$("pin-info").textContent=S.pin?"A senha está ativa. Canais de conteúdo adulto ficam trancados, e você pode trancar qualquer outro canal pelo menu → do player.":"Crie uma senha de 4 números. Com ela, canais de conteúdo adulto ficam trancados e você pode trancar qualquer outro canal pelo menu → do player."}
+$("pin-save").onclick=function(){
+  var v=$("pin-new").value.trim();
+  if(!/^\d{4}$/.test(v)){status("pin-status","A senha precisa ter exatamente 4 números.");return}
+  function gravar(){S.pin=v;desbloqueados={};save();$("pin-new").value="";infoPin();renderLive();status("pin-status","Senha salva. Os canais trancados vão pedir a senha.")}
+  if(S.pin)pedirPin("Trocar a senha","Digite a senha atual.",gravar);else gravar();
+};
+$("pin-off").onclick=function(){
+  if(!S.pin){status("pin-status","Não há senha criada.");return}
+  pedirPin("Tirar a senha","Digite a senha atual para desligar o bloqueio.",function(){S.pin="";S.bloq=[];save();infoPin();renderLive();status("pin-status","Bloqueio parental desligado.")});
+};
+
+/* ---------- números do controle ---------- */
+function digit(d){
+  if(tab!=="live"&&!(current&&current.kind==="live"))return;
+  digitBuf=(digitBuf+d).slice(-4);$("digits").textContent=digitBuf;$("digits").hidden=false;
+  clearTimeout(digitTimer);
+  digitTimer=setTimeout(function(){
+    var n=parseInt(digitBuf,10);digitBuf="";$("digits").hidden=true;
+    if(n>0&&n<=S.channels.length)play(S.channels[n-1],"live");
+  },1400);
+}
+
+/* ---------- navegação pelo controle remoto ---------- */
+/* O foco fica preso na camada de cima: senha, depois painéis do player, depois a página. */
+function camada(){if(!$("pin").hidden)return $("pin");if(!$("plist").hidden)return $("plist");if(!$("popts").hidden)return $("popts");return document}
+function focusables(){return Array.prototype.filter.call(camada().querySelectorAll(".f"),function(e){return e.offsetParent!==null})}
+function move(dir){
+  var els=focusables(),a=document.activeElement;
+  if(els.indexOf(a)<0){if(els[0])els[0].focus();return}
+  var r=a.getBoundingClientRect(),cx=r.left+r.width/2,cy=r.top+r.height/2,best=null,bs=Infinity;
+  els.forEach(function(e){
+    if(e===a)return;var q=e.getBoundingClientRect(),x=q.left+q.width/2,y=q.top+q.height/2,dx=x-cx,dy=y-cy,p,s;
+    if(dir==="right"){p=dx;s=Math.abs(dy)}else if(dir==="left"){p=-dx;s=Math.abs(dy)}else if(dir==="down"){p=dy;s=Math.abs(dx)}else{p=-dy;s=Math.abs(dx)}
+    if(p<=4)return;var score=p+s*2.5;if(score<bs){bs=score;best=e}
+  });
+  if(best){best.classList.add("kb");best.focus();best.scrollIntoView({block:"nearest",inline:"nearest"})}
+  else if(dir==="up"){window.scrollTo(0,0)}
+}
+var BACK=[27,8,10009,461,166];
+document.addEventListener("keydown",function(e){
+  var k=e.keyCode,ae=document.activeElement,typing=ae&&ae.tagName==="INPUT"&&ae.type!=="file";
+  var map={37:"left",38:"up",39:"right",40:"down"};
+  /* Teclas coloridas do controle: vermelho 403, verde 404, amarelo 405, azul 406 (no teclado: P, L, F, O). */
+  var cor=typing?0:k===403||k===80?"ant":k===404||k===76?"lista":k===405||k===70?"fav":k===406||k===79?"opcoes":0;
+  if(!$("pin").hidden){
+    if(BACK.indexOf(k)>-1||e.key==="GoBack"){e.preventDefault();fecharPin();return}
+    if(k>=48&&k<=57){e.preventDefault();pinDigito(String(k-48));return}
+    if(k>=96&&k<=105){e.preventDefault();pinDigito(String(k-96));return}
+    if(map[k]){e.preventDefault();move(map[k])}
+    return;
+  }
+  if(!$("player").hidden&&painelAberto()){
+    var naLista=!$("plist").hidden;
+    if(BACK.indexOf(k)>-1||e.key==="GoBack"||(naLista&&k===39)||(!naLista&&k===37)){e.preventDefault();fecharPaineis();showOsd();return}
+    if(k===38||k===40){e.preventDefault();move(map[k]);return}
+    if(k===33||k===427){e.preventDefault();zap(-1);return}
+    if(k===34||k===428){e.preventDefault();zap(1);return}
+    if(cor==="lista"){e.preventDefault();if(naLista)fecharPaineis();else abrirLista();return}
+    if(cor==="opcoes"){e.preventDefault();if(naLista)abrirOpcoes();else fecharPaineis();return}
+    return; // OK (Enter) aperta o item focado normalmente
+  }
+  if(!$("player").hidden){
+    if(BACK.indexOf(k)>-1||e.key==="GoBack"){e.preventDefault();closePlayer();return}
+    if(k===38||k===33||k===427){e.preventDefault();zap(-1);return}
+    if(k===40||k===34||k===428){e.preventDefault();zap(1);return}
+    if(k===37||cor==="lista"){e.preventDefault();abrirLista();return}
+    if(k===39||cor==="opcoes"){e.preventDefault();abrirOpcoes();return}
+    if(cor==="ant"){e.preventDefault();var ant=S.anterior&&byId(S.anterior);if(ant&&current&&ant.id!==current.item.id)play(ant,"live");return}
+    if(cor==="fav"&&current&&current.kind==="live"){e.preventDefault();var on=alternar("favs",current.item.id);$("o-fav").hidden=!on;showOsd();return}
+    if(k===13||k===32){e.preventDefault();showOsd();return}
+    if(k>=48&&k<=57){digit(String(k-48));return}
+    if(k>=96&&k<=105){digit(String(k-96));return}
+    return;
+  }
+  if(typing){
+    if(k===38){e.preventDefault();move("up")}else if(k===40){e.preventDefault();move("down")}
+    else if(k===27||k===10009||k===461){ae.blur()}
+    return;
+  }
+  if(map[k]){e.preventDefault();move(map[k]);return}
+  if(cor==="fav"){var cd=ae&&ae.closest&&ae.closest("#channels .card");if(cd){e.preventDefault();alternar("favs",cd.dataset.id);renderLive()}return}
+  if(cor==="ant"&&S.ultimo){e.preventDefault();openById(S.ultimo,"live");return}
+  if(BACK.indexOf(k)>-1){e.preventDefault();if(tab!=="live"){setTab("live");document.querySelector('.tab[data-tab="live"]').focus()}return}
+  if(k>=48&&k<=57){digit(String(k-48))}else if(k>=96&&k<=105){digit(String(k-96))}
+});
+document.addEventListener("mousedown",function(){document.querySelectorAll(".kb").forEach(function(e){e.classList.remove("kb")})});
+
+/* Tizen (Samsung): pede as teclas de canal e números */
+try{if(window.tizen&&tizen.tvinputdevice){["ChannelUp","ChannelDown","ColorF0Red","ColorF1Green","ColorF2Yellow","ColorF3Blue","0","1","2","3","4","5","6","7","8","9"].forEach(function(n){try{tizen.tvinputdevice.registerKey(n)}catch(e){}})}}catch(e){}
+
+renderAll();infoPin();renderStreams();
+loadAuto(false);
+loadGuia();setInterval(loadGuia,10*60*1000);
+/* A cada minuto, atualiza a barra de "Agora" do canal que está passando. */
+setInterval(function(){if(current&&!$("player").hidden)renderEpgOsd()},60*1000);
+setInterval(function(){loadAuto(false)},15*60*1000);
+/* Atualização automática: quando o servidor recebe uma versão nova da página, a TV recarrega sozinha
+   (na hora, se estiver na grade; ao sair do canal, se estiver assistindo). */
+var versao=null,recarregar=false;
+function conferirVersao(){
+  if(!HAS_SERVER)return;
+  fetch("/v",{cache:"no-store"}).then(function(r){return r.text()}).then(function(v){
+    if(versao===null){versao=v;return}
+    if(v!==versao){if($("player").hidden)location.reload();else recarregar=true}
+  }).catch(function(){});
+}
+conferirVersao();setInterval(conferirVersao,5*60*1000);
+/* Depois de uma atualização automática feita durante a troca de canal, volta direto para o canal escolhido. */
+try{var retomar=sessionStorage.getItem("tl.retomar");if(retomar){sessionStorage.removeItem("tl.retomar");setTimeout(function(){openById(retomar,"live")},300)}}catch(e){}
+var first=$("resume")||document.querySelector(".card")||document.querySelector(".tab");if(first)first.focus();
+})();
+</script>
+</body>
+</html>

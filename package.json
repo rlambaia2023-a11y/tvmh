@@ -1,0 +1,1 @@
+{"description":"TV Livre MH — TV web local com canais abertos e gratuitos","engines":{"bun":">=1.1"},"name":"tvlivre-mh","private":true,"scripts":{"start":"bun run server.ts"},"type":"module"}
