@@ -30,6 +30,26 @@ body{background:var(--bg);color:var(--fg);font-family:var(--font-body);font-size
 [hidden]{display:none!important}
 button,input{font:inherit;color:inherit}
 
+/* ---------- hamburger e drawer ---------- */
+.hamburger{background:none;border:0;color:var(--fg);font-size:1.6em;cursor:pointer;padding:.2em .4em;border-radius:10px;line-height:1}
+.hamburger:hover{background:var(--panel)}
+.drawer-backdrop{position:fixed;inset:0;z-index:40;background:rgba(0,0,0,.55)}
+.drawer{position:fixed;top:0;left:0;bottom:0;z-index:41;width:min(340px,86vw);background:var(--panel);border-right:1px solid var(--line);
+  transform:translateX(-105%);transition:transform .25s ease;display:flex;flex-direction:column;overflow-y:auto}
+.drawer.open{transform:translateX(0)}
+.drawer-head{display:flex;align-items:center;justify-content:space-between;padding:14px 16px;border-bottom:1px solid var(--line);
+  position:sticky;top:0;background:var(--panel);z-index:1}
+.drawer-title{font-family:var(--font-display);font-weight:800;font-size:1.3em;text-transform:uppercase;letter-spacing:.03em}
+.drawer-sec{padding:12px 16px;border-bottom:1px solid var(--line)}
+.drawer-sec h3{margin:0 0 8px;font-size:.85em;text-transform:uppercase;letter-spacing:.06em;color:var(--muted)}
+.drawer-list{display:flex;flex-direction:column;gap:2px}
+.drawer-item{display:flex;align-items:center;gap:10px;width:100%;text-align:left;background:none;border:0;border-radius:10px;
+  padding:.55em .7em;cursor:pointer;color:var(--fg);font-weight:500}
+.drawer-item:hover{background:var(--panel-2)}
+.drawer-item[aria-pressed="true"]{background:var(--panel-2);color:var(--signal);font-weight:700}
+.drawer-item .cnt{margin-left:auto;font-size:.8em;color:var(--muted);font-variant-numeric:tabular-nums}
+.drawer-item .flag{font-size:1.2em}
+
 /* ---------- topo ---------- */
 .top{position:sticky;top:0;z-index:5;display:flex;align-items:center;gap:clamp(12px,2vw,40px);flex-wrap:wrap;
   padding-block:clamp(12px,1.6vw,28px);padding-left:max(var(--gut), env(safe-area-inset-left,0px));padding-right:max(var(--gut), env(safe-area-inset-right,0px));
@@ -186,6 +206,7 @@ main{padding-left:max(var(--gut), env(safe-area-inset-left,0px));padding-right:m
 <body>
 
 <header class="top">
+  <button class="hamburger f" id="hamburger" aria-label="Abrir menu" aria-expanded="false">☰</button>
   <div class="brand" id="brand">TV Livre <b>MH</b></div>
   <nav class="tabs" role="tablist">
     <button class="tab f" role="tab" data-tab="live" aria-selected="true">Ao vivo</button>
@@ -199,6 +220,23 @@ main{padding-left:max(var(--gut), env(safe-area-inset-left,0px));padding-right:m
 </header>
 
 <main>
+  <!-- MENU HAMBURGER -->
+  <div class="drawer-backdrop" id="drawer-backdrop" hidden></div>
+  <aside class="drawer" id="drawer" aria-hidden="true" aria-label="Menu de canais">
+    <div class="drawer-head">
+      <span class="drawer-title">Canais</span>
+      <button class="hamburger f" id="drawer-close" aria-label="Fechar menu">✕</button>
+    </div>
+    <div class="drawer-sec">
+      <h3>🌎 Países</h3>
+      <div class="drawer-list" id="drawer-paises"></div>
+    </div>
+    <div class="drawer-sec">
+      <h3>🎯 Categorias</h3>
+      <div class="drawer-list" id="drawer-cats"></div>
+    </div>
+  </aside>
+
   <!-- AO VIVO -->
   <section id="tab-live">
     <div class="toolbar">
@@ -400,12 +438,30 @@ var NOME="TV Livre MH";
 var DEFAULT={name:NOME,channels:[],videos:[],sources:[]};
 var S=load();
 var localVideos=[]; // arquivos abertos do aparelho, só nesta sessão
-var tab="live", group="Todos", query="";
+var tab="live", group="Todos", query="", pais="Todos";
 var current=null, hls=null, osdTimer=null, digitBuf="", digitTimer=null, testing=false;
 var HAS_SERVER=/^https?:$/.test(location.protocol);
 var GUIA={}, desbloqueados={};
 var G_FAV="★ Favoritos", G_REC="Recentes";
 var ADULTO=/adult|xxx|\+ ?18|er[oó]tic|sexy|playboy|hot ?tv/i;
+
+/* ---------- países: inferido dos dados do canal ---------- */
+var PAISES=[
+  {id:"Todos", nome:"Todos os países", flag:"🌐"},
+  {id:"Brasil", nome:"Brasil", flag:"🇧🇷"},
+  {id:"América Latina", nome:"América Latina", flag:"🌎"},
+  {id:"Ásia", nome:"Ásia", flag:"🌏"}
+];
+function paisDe(c){
+  var g=c.group||"";
+  if(g==="Doramas"||g==="Coreia")return "Ásia";
+  if(g.indexOf("Pluto TV")===0)return "América Latina";
+  return "Brasil";
+}
+function filtraPais(list){
+  if(pais==="Todos")return list;
+  return list.filter(function(c){return paisDe(c)===pais});
+}
 
 /* ---------- favoritos, recentes e bloqueio parental ---------- */
 function arr(k){if(!Array.isArray(S[k]))S[k]=[];return S[k]}
@@ -483,12 +539,69 @@ function fetchList(url,label,statusId){
   .catch(function(){status(statusId,"Não consegui baixar. O servidor da lista pode bloquear acesso pelo navegador; tente baixar o arquivo e usar “Abrir arquivo .m3u”.")});
 }
 
+/* ---------- drawer hamburger: países e categorias ---------- */
+function abrirDrawer(){
+  renderDrawer();
+  $("drawer").classList.add("open");
+  $("drawer").setAttribute("aria-hidden","false");
+  $("drawer-backdrop").hidden=false;
+  $("hamburger").setAttribute("aria-expanded","true");
+}
+function fecharDrawer(){
+  $("drawer").classList.remove("open");
+  $("drawer").setAttribute("aria-hidden","true");
+  $("drawer-backdrop").hidden=true;
+  $("hamburger").setAttribute("aria-expanded","false");
+}
+function renderDrawer(){
+  // Países com contagem
+  var htmlP=PAISES.map(function(p){
+    var n=p.id==="Todos"?S.channels.length:S.channels.filter(function(c){return paisDe(c)===p.id}).length;
+    return '<button class="drawer-item f" data-pais="'+esc(p.id)+'" aria-pressed="'+(pais===p.id)+'">'+
+      '<span class="flag">'+p.flag+'</span><span>'+esc(p.nome)+'</span><span class="cnt">'+n+'</span></button>';
+  }).join("");
+  $("drawer-paises").innerHTML=htmlP;
+  // Categorias (grupos) com contagem, respeitando o filtro de país atual
+  var base=filtraPais(S.channels);
+  var groups=[];
+  base.forEach(function(c){if(groups.indexOf(c.group)<0)groups.push(c.group)});
+  groups.sort();
+  var htmlC='<button class="drawer-item f" data-cat="Todos" aria-pressed="'+(group==="Todos")+'"><span class="flag">📺</span><span>Todas as categorias</span><span class="cnt">'+base.length+'</span></button>'+
+    groups.map(function(g){
+      var n=base.filter(function(c){return c.group===g}).length;
+      return '<button class="drawer-item f" data-cat="'+esc(g)+'" aria-pressed="'+(group===g)+'"><span class="flag">▫️</span><span>'+esc(g)+'</span><span class="cnt">'+n+'</span></button>';
+    }).join("");
+  $("drawer-cats").innerHTML=htmlC;
+}
+function initDrawer(){
+  $("hamburger").addEventListener("click",abrirDrawer);
+  $("drawer-close").addEventListener("click",fecharDrawer);
+  $("drawer-backdrop").addEventListener("click",fecharDrawer);
+  document.addEventListener("keydown",function(e){if(e.key==="Escape")fecharDrawer()});
+  $("drawer").addEventListener("click",function(e){
+    var b=e.target.closest("[data-pais],[data-cat]");
+    if(!b)return;
+    if(b.dataset.pais!==undefined){
+      pais=b.dataset.pais;
+      // se a categoria atual não existe no novo país, volta para "Todos"
+      var base=filtraPais(S.channels);
+      if(group!=="Todos"&&group!==G_FAV&&group!==G_REC&&!base.some(function(c){return c.group===group}))group="Todos";
+    }else{
+      group=b.dataset.cat;
+    }
+    if(tab!=="live")setTab("live");
+    renderLive();renderDrawer();
+    fecharDrawer();
+  });
+}
+
 /* ---------- render ---------- */
 function filtered(){
   var base;
   if(group===G_FAV)base=S.channels.filter(ehFav);
   else if(group===G_REC)base=arr("recentes").map(byId).filter(Boolean);
   else base=S.channels.filter(function(c){return group==="Todos"||c.group===group});
+  base=filtraPais(base);
   return base.filter(function(c){return (!query||c.name.toLowerCase().indexOf(query)>-1)&&!(S.onlyOk&&parado(c))});
 }
 function hm(ts){var d=new Date(ts);return String(d.getHours()).padStart(2,"0")+":"+String(d.getMinutes()).padStart(2,"0")}
@@ -1130,6 +1243,7 @@ document.addEventListener("mousedown",function(){document.querySelectorAll(".kb"
 try{if(window.tizen&&tizen.tvinputdevice){["ChannelUp","ChannelDown","ColorF0Red","ColorF1Green","ColorF2Yellow","ColorF3Blue","0","1","2","3","4","5","6","7","8","9"].forEach(function(n){try{tizen.tvinputdevice.registerKey(n)}catch(e){}})}}catch(e){}
 
 renderAll();infoPin();renderStreams();
+initDrawer();
 loadAuto(false);
 loadGuia();setInterval(loadGuia,10*60*1000);
 /* A cada minuto, atualiza a barra de "Agora" do canal que está passando. */
