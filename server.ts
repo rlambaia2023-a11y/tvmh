@@ -414,10 +414,12 @@ function testeFinal(origem: string): void {
   if (!doramas) problemas.push("grupo Doramas vazio");
   const pluto = estado.canais.filter((c) => c.id.startsWith("pluto:")).length;
   if (!pluto) problemas.push("nenhum canal Pluto na lista");
+  const vod = canaisVod().length;
+  if (!vod) problemas.push("catálogo Filmes e Séries vazio");
   // EPG carrega 1 min após o boot; no teste de início, ausência ainda não é problema.
   if ((!guia || !guia.ts) && origem !== "inicio") problemas.push("guia EPG sem dados");
   const ok = !problemas.length;
-  console.log(JSON.stringify({ evt: "teste_final", origem, ok, total, doramas, pluto, problemas: problemas.length ? problemas : undefined }));
+  console.log(JSON.stringify({ evt: "teste_final", origem, ok, total, doramas, pluto, vod, problemas: problemas.length ? problemas : undefined }));
 }
 
 // ---------- Lista automática: baixa, testa e guarda só o que funciona ----------
@@ -572,7 +574,7 @@ function talvezFunciona(chave: string, motivo: string): boolean {
 }
 
 type Fonte = { nome: string; logo: string; grupo: string; chave: string; url: string; ref: string; ua: string };
-type Canal = { id: string; name: string; logo: string; group: string; url: string; ref: string; ua: string; alts: { url: string; ref: string; ua: string }[]; novoEm?: number };
+type Canal = { id: string; name: string; logo: string; group: string; url: string; ref: string; ua: string; alts: { url: string; ref: string; ua: string }[]; novoEm?: number; ano?: string; tipo?: string };
 const estado: { canais: Canal[]; atualizado: number; atualizando: boolean; revisando: boolean; ultimaTentativa: number; plutoTs: number; plutoRodando: boolean } = { canais: [], atualizado: 0, atualizando: false, revisando: false, ultimaTentativa: 0, plutoTs: 0, plutoRodando: false };
 
 function grupoPt(g: string): string {
@@ -586,6 +588,52 @@ function chaveDe(tvgId: string, nome: string): string {
   if (tvgId) return tvgId.split("@")[0].toLowerCase();
   return limparNome(nome).normalize("NFD").replace(/[\u0300-\u036f]/g, "").toLowerCase().replace(/[^a-z0-9]+/g, "");
 }
+// ---------- Filmes e Séries (domínio público, Archive.org) ----------
+// Catálogo curado e testado em 2026-10-23: todos os 34 links retornam HTTP 200 video/mp4.
+// Os itens VOD não entram na verificação rotativa nem na lista M3U: são servidos direto em /canais.
+const VOD_CATALOGO: { slug: string; titulo: string; ano: string; tipo: string; poster: string; url: string }[] = [
+  { slug: "a-noite-dos-mortos-vivos", titulo: "A Noite dos Mortos-Vivos", ano: "1968", tipo: "filme", poster: "https://archive.org/services/img/NightOfTheLivingDead1968-Restored", url: "https://archive.org/download/NightOfTheLivingDead1968-Restored/Notld1968Restoration-desktop_512kb.mp4" },
+  { slug: "plano-9-do-espa-o-sideral", titulo: "Plano 9 do Espaço Sideral", ano: "1959", tipo: "filme", poster: "https://archive.org/services/img/plan.-9.-from.-outer.-space.-1957", url: "https://archive.org/download/plan.-9.-from.-outer.-space.-1957/Plan%209%20From%20Outer%20Space%20%281957%29%2Fmp4%2FPlan.9.From.Outer.Space.1957.mp4" },
+  { slug: "a-casa-na-colina-assombrada", titulo: "A Casa na Colina Assombrada", ano: "1959", tipo: "filme", poster: "https://archive.org/services/img/house_on_haunted_hill_ipod", url: "https://archive.org/download/house_on_haunted_hill_ipod/house_on_haunted_hill_512kb.mp4" },
+  { slug: "jejum-de-amor-his-girl-friday", titulo: "Jejum de Amor (His Girl Friday)", ano: "1940", tipo: "filme", poster: "https://archive.org/services/img/his_girl_friday", url: "https://archive.org/download/his_girl_friday/his_girl_friday_512kb.mp4" },
+  { slug: "o-estranho-the-stranger", titulo: "O Estranho (The Stranger)", ano: "1946", tipo: "filme", poster: "https://archive.org/services/img/TheStranger_0", url: "https://archive.org/download/TheStranger_0/The_Stranger_512kb.mp4" },
+  { slug: "de-repente-suddenly", titulo: "De Repente (Suddenly)", ano: "1954", tipo: "filme", poster: "https://archive.org/services/img/suddenly", url: "https://archive.org/download/suddenly/suddenly_512kb.mp4" },
+  { slug: "sherlock-holmes-vestida-para-matar", titulo: "Sherlock Holmes: Vestida para Matar", ano: "1946", tipo: "filme", poster: "https://archive.org/services/img/dressed_to_kill", url: "https://archive.org/download/dressed_to_kill/dressed_to_kill_512kb.mp4" },
+  { slug: "as-viagens-de-gulliver", titulo: "As Viagens de Gulliver", ano: "1939", tipo: "filme", poster: "https://archive.org/services/img/gullivers_travels1939", url: "https://archive.org/download/gullivers_travels1939/gullivers_travels1939_512kb.mp4" },
+  { slug: "minha-morena-favorita", titulo: "Minha Morena Favorita", ano: "1947", tipo: "filme", poster: "https://archive.org/services/img/my_favorite_brunette", url: "https://archive.org/download/my_favorite_brunette/my_favorite_brunette_512kb.mp4" },
+  { slug: "abraham-lincoln", titulo: "Abraham Lincoln", ano: "1930", tipo: "filme", poster: "https://archive.org/services/img/abraham_lincoln", url: "https://archive.org/download/abraham_lincoln/abraham_lincoln_512kb.mp4" },
+  { slug: "mclintock", titulo: "McLintock!", ano: "1963", tipo: "filme", poster: "https://archive.org/services/img/mclintok_widescreen", url: "https://archive.org/download/mclintok_widescreen/McLintock_512kb.mp4" },
+  { slug: "o-flautista-de-hamelin", titulo: "O Flautista de Hamelin", ano: "1957", tipo: "filme", poster: "https://archive.org/services/img/The_Pied_Piper_of_Hamelin", url: "https://archive.org/download/The_Pied_Piper_of_Hamelin/pied_512kb.mp4" },
+  { slug: "a-morte-num-beijo-d-o-a", titulo: "A Morte num Beijo (D.O.A.)", ano: "1949", tipo: "filme", poster: "https://archive.org/services/img/doa-1949", url: "https://archive.org/download/doa-1949/DOA%201950.mp4" },
+  { slug: "carnaval-das-almas", titulo: "Carnaval das Almas", ano: "1962", tipo: "filme", poster: "https://archive.org/services/img/CarnivalofSouls", url: "https://archive.org/download/CarnivalofSouls/CarnivalOfSouls_512kb.mp4" },
+  { slug: "a-morta-viva-white-zombie", titulo: "A Morta-Viva (White Zombie)", ano: "1932", tipo: "filme", poster: "https://archive.org/services/img/white_zombie", url: "https://archive.org/download/white_zombie/white_zombie_512kb.mp4" },
+  { slug: "nosferatu-uma-sinfonia-do-horror", titulo: "Nosferatu: Uma Sinfonia do Horror", ano: "1922", tipo: "filme", poster: "https://archive.org/services/img/Nosferatu_most_complete_version_93_mins.", url: "https://archive.org/download/Nosferatu_most_complete_version_93_mins./Nosferatu_1922_Symphony_of_Horror_512kb.mp4" },
+  { slug: "o-general-buster-keaton", titulo: "O General (Buster Keaton)", ano: "1926", tipo: "filme", poster: "https://archive.org/services/img/TheGeneral_201312", url: "https://archive.org/download/TheGeneral_201312/The-General-v2.mp4" },
+  { slug: "detour-desvio-maldito", titulo: "Detour: Desvio Maldito", ano: "1945", tipo: "filme", poster: "https://archive.org/services/img/detour-1945", url: "https://archive.org/download/detour-1945/Detour%201945.mp4" },
+  { slug: "sita-sings-the-blues", titulo: "Sita Sings the Blues", ano: "2008", tipo: "filme", poster: "https://archive.org/services/img/Sita_Sings_the_Blues", url: "https://archive.org/download/Sita_Sings_the_Blues/Sita_Sings_the_Blues_DVD_NTSC4.mp4" },
+  { slug: "viagem-ao-planeta-das-mulheres-pr-hist-ricas", titulo: "Viagem ao Planeta das Mulheres Pré-Históricas", ano: "1967", tipo: "filme", poster: "https://archive.org/services/img/VoyagetothePlanetofPrehistoricWomen", url: "https://archive.org/download/VoyagetothePlanetofPrehistoricWomen/VoyagetothePlanetofPrehistoricWomen_512kb.mp4" },
+  { slug: "a-balada-sangrenta-a-bucket-of-blood", titulo: "A Balada Sangrenta (A Bucket of Blood)", ano: "1959", tipo: "filme", poster: "https://archive.org/services/img/ABucketofBlood", url: "https://archive.org/download/ABucketofBlood/Bucket_1959_512kb.mp4" },
+  { slug: "a-fera-do-mar-the-fast-and-the-furious", titulo: "A Fera do Mar (The Fast and the Furious)", ano: "1955", tipo: "filme", poster: "https://archive.org/services/img/TheFastandtheFuriousJohnIreland1954goofyrip", url: "https://archive.org/download/TheFastandtheFuriousJohnIreland1954goofyrip/TheFastandtheFuriousJohnIreland1954goofyrip_512kb.mp4" },
+  { slug: "sherlock-holmes-1954-s01e01-a-heran-a-cunningham", titulo: "Sherlock Holmes (1954) S01E01 — A Herança Cunningham", ano: "", tipo: "serie", poster: "https://archive.org/services/img/SherlockHolmes1954", url: "https://archive.org/download/SherlockHolmes1954/Sherlock%20Holmes%2001%20The%20Case%20of%20the%20Cunningham%20Heritage.mp4" },
+  { slug: "sherlock-holmes-1954-s01e02-o-caso-de-lady-beryl", titulo: "Sherlock Holmes (1954) S01E02 — O Caso de Lady Beryl", ano: "", tipo: "serie", poster: "https://archive.org/services/img/SherlockHolmes1954", url: "https://archive.org/download/SherlockHolmes1954/Sherlock%20Holmes%2002%20The%20Case%20Of%20Lady%20Beryl.mp4" },
+  { slug: "sherlock-holmes-1954-s01e03-a-arma-da-pensilv-nia", titulo: "Sherlock Holmes (1954) S01E03 — A Arma da Pensilvânia", ano: "", tipo: "serie", poster: "https://archive.org/services/img/SherlockHolmes1954", url: "https://archive.org/download/SherlockHolmes1954/Sherlock%20Holmes%2003%20The%20Case%20of%20the%20Pennsylvania%20Gun.mp4" },
+  { slug: "sherlock-holmes-1954-s01e04-a-vaqueira-do-texas", titulo: "Sherlock Holmes (1954) S01E04 — A Vaqueira do Texas", ano: "", tipo: "serie", poster: "https://archive.org/services/img/SherlockHolmes1954", url: "https://archive.org/download/SherlockHolmes1954/Sherlock%20Holmes%2004%20The%20Case%20Of%20The%20Texas%20Cowgirl.mp4" },
+  { slug: "sherlock-holmes-1954-s01e05-o-fantasma-briguento", titulo: "Sherlock Holmes (1954) S01E05 — O Fantasma Briguento", ano: "", tipo: "serie", poster: "https://archive.org/services/img/SherlockHolmes1954", url: "https://archive.org/download/SherlockHolmes1954/Sherlock%20Holmes%2005%20The%20Case%20Of%20The%20Belligerent%20Ghost.mp4" },
+  { slug: "sherlock-holmes-1954-s01e06-a-bailarina-t-mida", titulo: "Sherlock Holmes (1954) S01E06 — A Bailarina Tímida", ano: "", tipo: "serie", poster: "https://archive.org/services/img/SherlockHolmes1954", url: "https://archive.org/download/SherlockHolmes1954/Sherlock%20Holmes%2006%20The%20Case%20Of%20The%20Shy%20Ballerina.mp4" },
+  { slug: "bonanza-s01e19-a-gangue-da-trilha", titulo: "Bonanza S01E19 — A Gangue da Trilha", ano: "", tipo: "serie", poster: "https://archive.org/services/img/Bonanza_pd", url: "https://archive.org/download/Bonanza_pd/Bonanza%20s01e19.mp4" },
+  { slug: "bonanza-s01e20-epis-dio-20", titulo: "Bonanza S01E20 — Episódio 20", ano: "", tipo: "serie", poster: "https://archive.org/services/img/Bonanza_pd", url: "https://archive.org/download/Bonanza_pd/Bonanza%20s01e20.mp4" },
+  { slug: "bonanza-s01e21-epis-dio-21", titulo: "Bonanza S01E21 — Episódio 21", ano: "", tipo: "serie", poster: "https://archive.org/services/img/Bonanza_pd", url: "https://archive.org/download/Bonanza_pd/Bonanza%20s01e21.mp4" },
+  { slug: "bonanza-s01e22-epis-dio-22", titulo: "Bonanza S01E22 — Episódio 22", ano: "", tipo: "serie", poster: "https://archive.org/services/img/Bonanza_pd", url: "https://archive.org/download/Bonanza_pd/Bonanza%20s01e22.mp4" },
+  { slug: "bonanza-s01e23-epis-dio-23", titulo: "Bonanza S01E23 — Episódio 23", ano: "", tipo: "serie", poster: "https://archive.org/services/img/Bonanza_pd", url: "https://archive.org/download/Bonanza_pd/Bonanza%20s01e23.mp4" },
+  { slug: "bonanza-s01e24-epis-dio-24", titulo: "Bonanza S01E24 — Episódio 24", ano: "", tipo: "serie", poster: "https://archive.org/services/img/Bonanza_pd", url: "https://archive.org/download/Bonanza_pd/Bonanza%20s01e24.mp4" },
+];
+function canaisVod(): Canal[] {
+  return VOD_CATALOGO.map((v) => ({
+    id: "vod:" + v.slug, name: v.titulo, logo: v.poster, group: "Filmes e Séries",
+    url: v.url, ref: "", ua: "", alts: [], ano: v.ano, tipo: v.tipo,
+  }));
+}
+
 function lerM3U(texto: string): Fonte[] {
   const out: Fonte[] = [];
   let cur: Fonte | null = null;
@@ -993,7 +1041,8 @@ function canaisRota(q: URLSearchParams): Response {
   const velha = Date.now() - estado.atualizado > SEIS_HORAS;
   const forcar = q.get("forcar") === "1" && Date.now() - estado.ultimaTentativa > 10 * 60 * 1000;
   if ((velha || forcar) && !estado.atualizando) atualizar();
-  return new Response(JSON.stringify({ atualizado: estado.atualizado, atualizando: estado.atualizando, total: estado.canais.length, canais: estado.canais }), {
+  const todos = [...estado.canais, ...canaisVod()];
+  return new Response(JSON.stringify({ atualizado: estado.atualizado, atualizando: estado.atualizando, total: todos.length, canais: todos }), {
     headers: { ...CORS, "content-type": "application/json; charset=utf-8", "cache-control": "no-cache" },
   });
 }

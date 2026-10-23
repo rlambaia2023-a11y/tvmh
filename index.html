@@ -55,6 +55,7 @@ main{padding-left:max(var(--gut), env(safe-area-inset-left,0px));padding-right:m
 .card .ini{font-family:var(--font-display);font-weight:800;font-size:2.2em;color:var(--muted)}
 .card .meta{display:flex;gap:.6em;align-items:baseline;padding:.6em .8em .75em;min-width:0}
 .card .num{font-family:var(--font-display);font-weight:600;color:var(--signal);font-variant-numeric:tabular-nums}
+.card .ano{color:var(--muted);font-size:.85em}
 .card .name{font-weight:700;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;min-width:0}
 .card .grp{position:absolute;top:.5em;left:.5em;font-size:.7em;letter-spacing:.06em;text-transform:uppercase;background:rgba(0,0,0,.55);padding:.2em .55em;border-radius:6px;color:var(--fg)}
 
@@ -188,6 +189,7 @@ main{padding-left:max(var(--gut), env(safe-area-inset-left,0px));padding-right:m
   <div class="brand" id="brand">TV Livre <b>MH</b></div>
   <nav class="tabs" role="tablist">
     <button class="tab f" role="tab" data-tab="live" aria-selected="true">Ao vivo</button>
+    <button class="tab f" role="tab" data-tab="filmes" aria-selected="false">Filmes e Séries</button>
     <button class="tab f" role="tab" data-tab="doramas" aria-selected="false">Doramas</button>
     <button class="tab f" role="tab" data-tab="novos" aria-selected="false">Novos</button>
     <button class="tab f" role="tab" data-tab="videos" aria-selected="false">Meus vídeos</button>
@@ -212,6 +214,18 @@ main{padding-left:max(var(--gut), env(safe-area-inset-left,0px));padding-right:m
     <div class="empty" id="live-empty" hidden>
       <strong>Nenhum canal ainda.</strong><br>
       Os canais abertos estão chegando do servidor. Se demorar, confira a internet da TV ou vá em <strong>Ajustes</strong> e toque em “Atualizar agora”.
+    </div>
+  </section>
+
+  <!-- FILMES E SÉRIES -->
+  <section id="tab-filmes" hidden>
+    <div class="toolbar">
+      <span class="teststat">Filmes e séries de domínio público, gratuitos e legais.</span>
+    </div>
+    <div class="grid" id="filmes"></div>
+    <div class="empty" id="filmes-empty" hidden>
+      <strong>Nenhum filme ainda.</strong><br>
+      Eles chegam do servidor junto com a lista de canais.
     </div>
   </section>
 
@@ -487,7 +501,7 @@ function card(item,num,showGroup){
     (badges&&!morto?'<span class="badges">'+badges+'</span>':'')+
     '<div class="art">'+art+'</div>'+
     (showGroup?'<span class="grp">'+esc(item.group)+'</span>':'')+
-    '<div class="meta">'+(num?'<span class="num">'+String(num).padStart(3,"0")+'</span>':'')+'<span class="name">'+esc(item.name)+'</span></div>'+
+    '<div class="meta">'+(num?'<span class="num">'+String(num).padStart(3,"0")+'</span>':'')+'<span class="name">'+esc(item.name)+'</span>'+(item.ano?'<span class="ano">'+esc(item.ano)+'</span>':'')+'</div>'+
     (g?'<span class="now">'+(g.cur?'<b>AGORA</b>'+esc(g.cur.t):'Às '+hm(g.nxt.s)+': '+esc(g.nxt.t))+'</span>':'')+'</button>';
 }
 function renderLive(){
@@ -532,6 +546,12 @@ function renderDoramas(){
   $("doramas").innerHTML=html;
   $("doramas-empty").hidden=list.length>0;
 }
+function renderFilmes(){
+  var list=S.channels.filter(function(c){return c.group==="Filmes e Séries"});
+  var html=list.map(function(c){return card(c,0,false)}).join("");
+  $("filmes").innerHTML=html;
+  $("filmes-empty").hidden=list.length>0;
+}
 function renderNovos(){
   var list=S.channels.filter(ehNovo);
   var html=list.map(function(c){return card(c,S.channels.indexOf(c)+1,true)}).join("");
@@ -541,13 +561,14 @@ function renderNovos(){
 function renderSources(){
   $("sources").innerHTML=S.sources.map(function(s){return '<li><span>'+esc(s.label)+'</span><span>'+s.count+' canais</span></li>'}).join("");
 }
-function renderAll(){renderBrand();renderLive();renderDoramas();renderNovos();renderVideos();renderSources()}
+function renderAll(){renderBrand();renderLive();renderFilmes();renderDoramas();renderNovos();renderVideos();renderSources()}
 
 /* ---------- abas ---------- */
 function setTab(t){
   tab=t;
   document.querySelectorAll(".tab").forEach(function(b){b.setAttribute("aria-selected",b.dataset.tab===t)});
-  ["live","doramas","novos","videos","settings"].forEach(function(k){$("tab-"+k).hidden=k!==t});
+  ["live","filmes","doramas","novos","videos","settings"].forEach(function(k){$("tab-"+k).hidden=k!==t});
+  if(t==="filmes")renderFilmes();
   if(t==="doramas")renderDoramas();
   if(t==="novos")renderNovos();
 }
@@ -557,6 +578,7 @@ $("groups").addEventListener("click",function(e){var b=e.target.closest(".chip")
 $("q").addEventListener("input",function(){query=this.value.trim().toLowerCase();renderLive()});
 $("channels").addEventListener("click",function(e){var b=e.target.closest(".card");if(b)openById(b.dataset.id,"live")});
 $("doramas").addEventListener("click",function(e){var b=e.target.closest(".card");if(b)openById(b.dataset.id,"doramas")});
+$("filmes").addEventListener("click",function(e){var b=e.target.closest(".card");if(b)openById(b.dataset.id,"filmes")});
 $("novos").addEventListener("click",function(e){var b=e.target.closest(".card");if(b)openById(b.dataset.id,"novos")});
 $("videos").addEventListener("click",function(e){var b=e.target.closest(".card");if(b)openById(b.dataset.id,"videos")});
 
@@ -628,6 +650,7 @@ document.querySelectorAll("label.btn").forEach(function(l){l.addEventListener("k
 var video=$("video");
 function listFor(kind){
   if(kind==="live")return S.channels;
+  if(kind==="filmes")return S.channels.filter(function(c){return c.group==="Filmes e Séries"});
   if(kind==="doramas")return S.channels.filter(function(c){return c.group==="Doramas"||c.group==="Coreia"});
   if(kind==="novos")return S.channels.filter(ehNovo);
   return allVideos();
@@ -735,7 +758,7 @@ function play(item,kind,forceRelay,alt,teimoso){
   var l=listFor(kind),n=l.indexOf(item)+1;
   $("o-num").textContent=kind==="live"?String(n).padStart(3,"0"):"";
   $("o-title").textContent=item.name;
-  $("o-group").textContent=kind==="live"?item.group:"";
+  $("o-group").textContent=kind==="live"?item.group:(kind==="filmes"?(item.tipo==="serie"?"Série":"Filme"):"");
   $("o-live").hidden=kind!=="live";
   $("o-fav").hidden=!(kind==="live"&&ehFav(item));
   renderEpgOsd();
