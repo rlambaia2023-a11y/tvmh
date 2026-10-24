@@ -63,6 +63,22 @@ const perfilPorHost = new Map<string, number>();
 // (cookies do site dela e/ou IP alternativo). O relay reaplica sozinho
 // nas próximas vezes, sem precisar pedir de novo.
 const condicaoPorHost = new Map<string, { cookie?: string; xff?: string }>();
+// As condições vencedoras do modo teimoso ficam salvas em disco (dados/condicoes-teimoso.json)
+// para sobreviver às reinicializações do servidor.
+async function salvarCondicoesTeimoso(): Promise<void> {
+  try { await guardar("condicoes-teimoso.json", JSON.stringify([...condicaoPorHost])); } catch {}
+}
+async function carregarCondicoesTeimoso(): Promise<void> {
+  try {
+    const s = await ler("condicoes-teimoso.json");
+    if (!s) return;
+    const arr = JSON.parse(s);
+    if (Array.isArray(arr)) for (const [h, c] of arr) {
+      if (typeof h === "string" && c && (c.cookie || c.xff)) condicaoPorHost.set(h, c);
+    }
+    if (condicaoPorHost.size) console.log(JSON.stringify({ evt: "teimoso_condicoes_carregadas", total: condicaoPorHost.size }));
+  } catch {}
+}
 const UA_CHROME = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/130.0 Safari/537.36";
 const IPS_BR = ["189.63.1.1", "187.44.1.1", "177.92.1.1", "201.48.1.1"];
 
@@ -87,6 +103,7 @@ async function buscar(u: URL, ref: string | null, ua: string | null, range: stri
       if (rc.status !== 403 && rc.status !== 401) return rc;
       rc.body?.cancel();
       condicaoPorHost.delete(u.host); // venceu: tenta do zero na próxima
+      salvarCondicoesTeimoso();
     } catch {}
   }
   // Pluto TV usa chave própria no link; trocar o perfil não muda nada, então vai direto.
@@ -145,6 +162,7 @@ async function buscarTeimoso(u: URL, ref: string | null, ua: string | null, rang
       const r2 = await fetch(u.href, { headers: h, redirect: "follow", signal: AbortSignal.timeout(ms) });
       if (r2.status !== 403 && r2.status !== 401) {
         condicaoPorHost.set(host, t);
+        salvarCondicoesTeimoso();
         console.log(JSON.stringify({ evt: "teimoso_ok", host, comCookie: !!t.cookie, xff: t.xff || "real" }));
         return r2;
       }
@@ -785,11 +803,14 @@ async function verificarLote(alvos: Canal[], rotulo: string): Promise<void> {
       const fundo = c.group === "Doramas" || c.group === "Coreia";
       return { c, r: await (fundo ? verificarFundo(c.url, c.ref || null, c.ua || null) : verificar(c.url, c.ref || null, c.ua || null)) };
     });
-    // Página Doramas: 403/401 também conta como morto (filtro estrito); a recuperação
-    // tenta o modo teimoso antes de remover.
+    // 403/401 (a emissora recusou a conexão) conta como morto em TODOS os canais para
+    // entrar na recuperação: o modo teimoso tenta abrir com cookies do site + IP
+    // brasileiro antes de qualquer decisão. Doramas/Coreia têm filtro estrito e saem
+    // da lista se nada funcionar; os demais ficam (podem voltar sozinhos).
     const mortos = testes.filter((x) => {
       if (x.r.ok) return false;
       const fundo = x.c.group === "Doramas" || x.c.group === "Coreia";
+      if (/403|401/.test(x.r.motivo)) return true;
       return fundo || !talvezFunciona(x.c.id, x.r.motivo);
     }).map((x) => x.c);
     // Busca links novos nas fontes para os canais que caíram (doramas da Pluto
@@ -823,8 +844,11 @@ async function verificarLote(alvos: Canal[], rotulo: string): Promise<void> {
       const fundo = c.group === "Doramas" || c.group === "Coreia";
       const res = await Promise.all(candidatos.map((l) => fundo ? verificarFundo(l.url, l.ref || null, l.ua || null) : verificar(l.url, l.ref || null, l.ua || null)));
       const bons = candidatos.filter((_, i) => res[i].ok || (!fundo && talvezFunciona(c.id, res[i].motivo)));
-      // Doramas: se tudo falhou com 403/401, tenta o modo teimoso uma vez antes de remover.
-      if (!bons.length && fundo && res.some((r) => /403|401/.test(r.motivo))) {
+      // Modo teimoso em TODOS os canais: se algum link caiu com 403/401 (a emissora
+      // recusou a conexão — geralmente bloqueio geográfico ou exigência de passar pelo
+      // site dela), tenta uma vez abrir com cookies do site + IP brasileiro. Se vencer,
+      // a condição fica salva em disco e o relay reaplica sozinho nas próximas vezes.
+      if (res.some((r) => /403|401/.test(r.motivo))) {
         const u = alvo(c.url);
         if (u) {
           try {
@@ -833,7 +857,7 @@ async function verificarLote(alvos: Canal[], rotulo: string): Promise<void> {
             rt.body?.cancel();
             if (ok) {
               console.log(JSON.stringify({ evt: "teimoso_recuperou", id: c.id }));
-              return; // mantém o canal; a condição vencedora foi salva e o relay reaplica
+              if (fundo) return; // doramas: já estava condenado; agora fica
             }
           } catch {}
         }
@@ -1119,6 +1143,7 @@ Bun.serve({
 // só refaz os testes se a lista tiver mais de 6 horas.
 {
   await carregarPagina();
+  await carregarCondicoesTeimoso();
   const salvo = await ler("canais.json");
   if (salvo) {
     try {
